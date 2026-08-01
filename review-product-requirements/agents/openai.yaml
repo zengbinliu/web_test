@@ -1,0 +1,4 @@
+interface:
+  display_name: "产品需求质量评审"
+  short_description: "默认评审需求，可选结合设计稿或RAG检查歧义、遗漏、冲突和测试风险"
+  default_prompt: "Use $review-product-requirements to review this PRD, optionally adding design-mockup comparison or RAG cross-checking only when I provide or request them."
