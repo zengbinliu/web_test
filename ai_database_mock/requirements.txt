@@ -1,0 +1,13 @@
+Flask>=3.0,<3.2
+itsdangerous>=2.2,<3
+mysql-connector-python>=8.4,<9; python_version < "3.10"
+mysql-connector-python>=8.4,<10; python_version >= "3.10"
+networkx>=3.2,<3.3; python_version < "3.10"
+networkx>=3.2,<4; python_version >= "3.10"
+pyvis>=0.3.2,<1
+python-dotenv>=1.0,<1.2; python_version < "3.10"
+python-dotenv>=1.0,<2; python_version >= "3.10"
+requests>=2.31,<2.33; python_version < "3.10"
+requests>=2.31,<3; python_version >= "3.10"
+SQLAlchemy>=2.0,<2.1
+sqlglot>=25,<30

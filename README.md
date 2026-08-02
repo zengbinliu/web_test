@@ -5,7 +5,7 @@
 ## 需求分析skill(review-product-requirements)
 用于对需求文档进行分析，排查出不清晰的需求点以及矛盾点。
 
-本skills，基于codex，参考了https://github.com/Spacey6849/AgentSkills/blob/main/.claude/skills/requirements-analysis/SKILL.md。
+本skills，基于codex，参考了https://github.com/Spacey6849/AgentSkills/blob/main/.claude/skills/requirements-analysis/SKILL.md
 
 ### 改进点
  - 修改补充了原版缺少的风险分级、准入结论、业务规则一致性、状态与数据边界、验收标准及需求追踪能力
@@ -136,3 +136,6 @@ RAG 或设计稿无法访问时，继续完成其他可用范围，并明确说�
 <评审报告输出路径>
 
 ```
+
+## ai_database_mock
+该项目用于AI生成数据库mock语句，详见项目下README.md

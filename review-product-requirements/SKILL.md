@@ -1,3 +1,4 @@
+
 ---
 name: review-product-requirements
 description: Review PRDs, feature specifications, user stories, tickets, and acceptance criteria before implementation, with optional design-mockup/prototype comparison and optional RAG knowledge-base cross-checking. Use for requirements-only reviews by default, and enable design or RAG modes only when the user explicitly provides those inputs or requests those checks. Identify ambiguity, gaps, conflicts, hidden complexity, business and data risks, missing interaction states, accessibility or responsive issues, non-testable statements, and opportunities to improve requirements, designs, acceptance criteria, and risk-based test ideas.
