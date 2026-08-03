@@ -431,6 +431,161 @@ class HierarchicalPlanTests(unittest.TestCase):
         ):
             validate_plan_values(plan, self.graph)
 
+    def test_lookup_assign_each_uses_distinct_offsets(self):
+        engine = self.engine_factory()
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                "INSERT INTO root_records (root_code) VALUES ('p1'), ('p2'), ('p3')"
+            )
+        engine.dispose()
+
+        payload = {
+            "kind": "hierarchical_insert",
+            "version": 1,
+            "entities": [
+                {
+                    "id": "child_records",
+                    "table": "child_records",
+                    "count": 3,
+                    "count_mode": "exactly",
+                    "values": {"required_text": "each-lookup"},
+                    "generators": {
+                        "root_id": {
+                            "strategy": "lookup",
+                            "table": "root_records",
+                            "column": "id",
+                            "offset": 1,
+                            "order_by": "id",
+                            "assign": "each",
+                        },
+                        "child_code": {
+                            "strategy": "prefixed_sequence",
+                            "prefix": "auto_test_001_",
+                            "start": 1,
+                            "pad": 3,
+                            "scope": "entity",
+                        },
+                    },
+                }
+            ],
+        }
+        plan = parse_hierarchical_plan(json.dumps(payload), self.graph, require_plan=True)
+        sql = render_hierarchical_sql(plan, self.graph)
+        self.assertIn("OFFSET 0", sql)
+        self.assertIn("OFFSET 1", sql)
+        self.assertIn("OFFSET 2", sql)
+
+        result = execute_sql_safe(
+            canonical_hierarchical_plan(plan),
+            preview_only=False,
+            graph_path=self.graph_path,
+            engine_factory=self.engine_factory,
+        )
+        self.assertEqual(result["type"], "data_plan_execution")
+        engine = self.engine_factory()
+        with engine.connect() as connection:
+            root_ids = [
+                row[0]
+                for row in connection.execute(
+                    text("SELECT root_id FROM child_records ORDER BY id")
+                ).all()
+            ]
+            self.assertEqual(root_ids, [1, 2, 3])
+        engine.dispose()
+
+    def test_lookup_snowflake_and_prefixed_sequence_generators(self):
+        engine = self.engine_factory()
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                "INSERT INTO root_records (root_code) VALUES ('plan-a'), ('plan-b'), ('plan-c')"
+            )
+        engine.dispose()
+
+        payload = {
+            "kind": "hierarchical_insert",
+            "version": 1,
+            "entities": [
+                {
+                    "id": "child_records",
+                    "table": "child_records",
+                    "count": 2,
+                    "count_mode": "exactly",
+                    "values": {"required_text": "from-lookup"},
+                    "generators": {
+                        "root_id": {
+                            "strategy": "lookup",
+                            "table": "root_records",
+                            "column": "id",
+                            "offset": 2,
+                            "order_by": "id",
+                        },
+                        "child_code": {
+                            "strategy": "prefixed_sequence",
+                            "prefix": "auto_test_001_",
+                            "start": 1,
+                            "pad": 3,
+                            "scope": "entity",
+                        },
+                    },
+                }
+            ],
+        }
+
+        plan = parse_hierarchical_plan(
+            json.dumps(payload),
+            self.graph,
+            require_plan=True,
+        )
+        validate_plan_values(plan, self.graph)
+
+        sql = render_hierarchical_sql(plan, self.graph)
+        self.assertIn("SELECT", sql)
+        self.assertIn("OFFSET 1", sql)
+        self.assertIn("auto_test_001_001", sql)
+
+        result = execute_sql_safe(
+            canonical_hierarchical_plan(plan),
+            preview_only=False,
+            graph_path=self.graph_path,
+            engine_factory=self.engine_factory,
+        )
+        self.assertEqual(result["type"], "data_plan_execution")
+        self.assertEqual(result["total_rows"], 2)
+
+        engine = self.engine_factory()
+        with engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    "SELECT root_id, child_code, required_text "
+                    "FROM child_records ORDER BY id"
+                )
+            ).all()
+            self.assertEqual(len(rows), 2)
+            self.assertEqual(rows[0].root_id, 2)
+            self.assertEqual(rows[1].root_id, 2)
+            self.assertEqual(rows[0].child_code, "auto_test_001_001")
+            self.assertEqual(rows[1].child_code, "auto_test_001_002")
+        engine.dispose()
+
+    def test_snowflake_generator_emits_distinct_numeric_ids(self):
+        payload = plan_payload()
+        payload["entities"][2]["generators"] = {
+            "position_index": {"strategy": "snowflake", "scope": "entity"}
+        }
+        plan = parse_hierarchical_plan(
+            json.dumps(payload),
+            self.graph,
+            require_plan=True,
+        )
+        sql = render_hierarchical_sql(plan, self.graph)
+        numbers = [
+            int(token)
+            for token in sql.replace(",", " ").replace("(", " ").replace(")", " ").split()
+            if token.isdigit() and len(token) >= 10
+        ]
+        self.assertGreaterEqual(len(numbers), 2)
+        self.assertEqual(len(numbers), len(set(numbers)))
+
     def test_required_values_reject_empty_content(self):
         payload = plan_payload()
         payload["entities"][1]["values"]["required_text"] = ""

@@ -470,7 +470,8 @@ def analyze_user_request(query: str, graph: nx.MultiDiGraph) -> Dict[str, Any]:
 1. tables 只包含完成请求直接需要的表；中间 JOIN 表由系统补齐。
 2. 表名必须逐字来自目录，不得臆造。
 3. 读取、统计和校验属于 select；新增测试数据属于 insert。
-4. INSERT 请求必须列出用户明确要求创建的每一种业务对象对应的表，不能只返回叶子表。
+4. INSERT 请求的 tables 只列出用户明确要求【新建/插入】的业务对象对应的表；仅用于查询、引用、取已有 id 的表不要放入 tables。
+5. 若请求同时包含“查询已有表 + 新建另一表”，task_type 仍为 insert，tables 只含新建目标表。
 """
     raw_result = strip_code_fence(_llm_request(prompt))
     try:
@@ -504,6 +505,41 @@ def call_llm(prompt: str) -> str:
     if not content:
         raise AgentError("模型没有返回生成结果")
     return content
+
+
+def query_prefers_data_plan(query: str) -> bool:
+    """Prefer hierarchical data plans when the request needs generators/lookups."""
+    patterns = (
+        r"查询",
+        r"已有",
+        r"第\s*\d+\s*条",
+        r"取.{0,12}id",
+        r"雪花",
+        r"snowflake",
+        r"开头",
+        r"前缀",
+        r"lookup",
+    )
+    return any(re.search(pattern, query, flags=re.IGNORECASE) for pattern in patterns)
+
+
+def tables_mentioned_in_query(query: str, graph: nx.MultiDiGraph) -> Set[str]:
+    lowered = query.lower()
+    mentioned = set()
+    for table in graph.nodes:
+        name = str(table)
+        if name.lower() in lowered:
+            mentioned.add(name)
+    return mentioned
+
+
+def plan_lookup_tables(plan) -> Set[str]:
+    return {
+        str(generator["table"])
+        for entity in plan.entities
+        for generator in entity.generators.values()
+        if generator.get("strategy") == "lookup" and generator.get("table")
+    }
 
 
 def call_deepseek(prompt: str) -> str:
@@ -558,12 +594,15 @@ class NewSQLAgent:
             task_type = analysis["task_type"]
             selected_tables = analysis["tables"]
         if task_type == "insert":
-            context_tables = expand_with_parent_dependencies(graph, selected_tables)
+            context_seed = set(selected_tables) | tables_mentioned_in_query(query, graph)
+            context_tables = expand_with_parent_dependencies(graph, context_seed)
         else:
             context_tables = expand_with_join_paths(graph, selected_tables)
         relationships = collect_relationships(graph, context_tables)
         if structured_insert is None:
-            structured_insert = task_type == "insert" and len(selected_tables) > 1
+            structured_insert = task_type == "insert" and (
+                len(selected_tables) > 1 or query_prefers_data_plan(query)
+            )
         prompt_type = "insert_plan" if structured_insert else task_type
         return build_task_specific_prompt(
             query=query,
@@ -576,8 +615,8 @@ class NewSQLAgent:
     def generate_sql(self, query: str) -> str:
         graph = self.graph
         analysis = analyze_user_request(query, graph)
-        structured_insert = (
-            analysis["task_type"] == "insert" and len(analysis["tables"]) > 1
+        structured_insert = analysis["task_type"] == "insert" and (
+            len(analysis["tables"]) > 1 or query_prefers_data_plan(query)
         )
         prompt = self.build_prompt(
             query,
@@ -596,15 +635,26 @@ class NewSQLAgent:
                         require_plan=True,
                     )
                     planned_tables = {entity.table for entity in plan.entities}
-                    missing_tables = set(analysis["tables"]) - planned_tables
+                    lookup_tables = plan_lookup_tables(plan)
+                    created_and_looked_up = planned_tables & lookup_tables
+                    if created_and_looked_up:
+                        raise DataPlanError(
+                            "以下表不能同时作为新建实体和 lookup 来源: "
+                            + ", ".join(sorted(created_and_looked_up))
+                            + "。引用已有数据时请删除该表 entity，只保留 "
+                            "generators.lookup；若要新建父子数据请用 parent 关系"
+                        )
+                    missing_tables = (
+                        set(analysis["tables"]) - planned_tables - lookup_tables
+                    )
                     allowed_tables = expand_with_parent_dependencies(
                         graph,
-                        analysis["tables"],
-                    )
+                        set(analysis["tables"]) | tables_mentioned_in_query(query, graph),
+                    ) | lookup_tables
                     unexpected_tables = planned_tables - allowed_tables
                     if missing_tables:
                         raise DataPlanError(
-                            "分层数据计划遗漏了用户要求的表: "
+                            "分层数据计划遗漏了用户要求新建的表: "
                             + ", ".join(sorted(missing_tables))
                         )
                     if unexpected_tables:
@@ -619,7 +669,11 @@ class NewSQLAgent:
                     if plan_attempt == 0:
                         repair_prompt = (
                             f"{prompt}\n\n上一次输出未通过系统校验：{exc}\n"
-                            "请修正所有问题，重新输出完整 JSON，不要解释。"
+                            "请修正所有问题，重新输出完整 JSON，不要解释。\n"
+                            "特别注意：仅查询/引用已有数据的表不要创建 entity，"
+                            "应使用 generators.lookup；"
+                            "若要把多条已有记录一一分配给新建行，使用 "
+                            'assign="each"。'
                         )
                         generated_content = call_llm(repair_prompt)
             raise AgentError(f"模型生成的数据计划不合格: {validation_error}")

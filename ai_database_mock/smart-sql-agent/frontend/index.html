@@ -16,6 +16,15 @@
             --primary-hover: #10543c;
             --danger: #b42318;
             --warning: #8a4b08;
+            --code-bg: #f4f6f5;
+            --token-key: #0b5f8a;
+            --token-string: #176b4d;
+            --token-number: #a35c00;
+            --token-bool: #7a3e9d;
+            --token-null: #8a9399;
+            --token-kw: #0b5f8a;
+            --token-comment: #6b7280;
+            --token-ident: #334155;
         }
 
         * { box-sizing: border-box; }
@@ -23,7 +32,7 @@
             margin: 0;
             background: var(--background);
             color: var(--text);
-            font-family: Arial, "Microsoft YaHei", sans-serif;
+            font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
             letter-spacing: 0;
         }
         header {
@@ -50,9 +59,7 @@
             font: inherit;
             line-height: 1.55;
         }
-        #sqlOutput, #sqlPreviewOutput { min-height: 180px; font-family: Consolas, monospace; }
-        #sqlPreviewOutput { min-height: 320px; margin-top: 8px; }
-        .sql-detail { margin-top: 20px; }
+        #sqlOutput { min-height: 220px; font-family: Consolas, "Cascadia Mono", monospace; font-size: 13px; }
         textarea:focus { outline: 3px solid rgba(23, 107, 77, .18); border-color: var(--primary); }
         .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
         button {
@@ -85,17 +92,279 @@
             border-radius: 6px;
             background: #f1f3f4;
             white-space: pre-wrap;
+            font-family: Consolas, "Cascadia Mono", monospace;
+            font-size: 13px;
+            line-height: 1.55;
         }
         .table-wrap { overflow-x: auto; margin-top: 12px; }
         table { border-collapse: collapse; width: 100%; background: var(--surface); }
         th, td { border: 1px solid var(--border); padding: 8px 10px; text-align: left; vertical-align: top; }
         th { background: #eef2f0; white-space: nowrap; }
         td { max-width: 420px; overflow-wrap: anywhere; }
+
+        .output-panel { margin-top: 4px; }
+        .panel-toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+        .panel-toolbar .label-row {
+            display: flex;
+            align-items: baseline;
+            gap: 8px;
+            min-width: 0;
+        }
+        .panel-toolbar label { margin: 0; }
+        .panel-meta {
+            color: var(--muted);
+            font-size: 13px;
+            font-weight: 400;
+        }
+        .panel-tools { display: flex; flex-wrap: wrap; gap: 6px; }
+        .panel-tools button {
+            min-height: 32px;
+            padding: 4px 10px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        .panel-tools button.active {
+            background: var(--primary);
+            color: #fff;
+        }
+
+        .code-view {
+            max-height: 520px;
+            overflow: auto;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface);
+        }
+        .sql-visual { padding: 12px; display: grid; gap: 14px; }
+        .insert-block {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: #fafbfb;
+            overflow: hidden;
+        }
+        .insert-head {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 8px 12px;
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--border);
+            background: #eef2f0;
+        }
+        .insert-head .table-name {
+            font-weight: 700;
+            font-family: Consolas, "Cascadia Mono", monospace;
+            font-size: 13px;
+        }
+        .insert-head .row-count {
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .insert-table-wrap { overflow-x: auto; }
+        .insert-table {
+            border-collapse: collapse;
+            width: max-content;
+            min-width: 100%;
+            background: var(--surface);
+            font-size: 12.5px;
+        }
+        .insert-table th,
+        .insert-table td {
+            border: 1px solid var(--border);
+            padding: 6px 10px;
+            text-align: left;
+            vertical-align: top;
+            white-space: nowrap;
+            max-width: 280px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .insert-table th {
+            position: sticky;
+            top: 0;
+            background: #f3f6f4;
+            font-weight: 700;
+            z-index: 1;
+        }
+        .insert-table th.row-idx,
+        .insert-table td.row-idx {
+            position: sticky;
+            left: 0;
+            background: #f8faf9;
+            color: var(--muted);
+            font-weight: 600;
+            text-align: right;
+            max-width: 48px;
+            z-index: 2;
+        }
+        .insert-table th.row-idx { z-index: 3; background: #eef2f0; }
+        .insert-table td.null { color: var(--token-null); font-style: italic; }
+        .insert-table td.num { color: var(--token-number); font-family: Consolas, "Cascadia Mono", monospace; }
+        .insert-table td.str { color: var(--token-string); font-family: Consolas, "Cascadia Mono", monospace; }
+        .insert-table tr:hover td { background: #f3faf6; }
+        .insert-table tr:hover td.row-idx { background: #e8f2ed; }
+        .sql-source {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface);
+        }
+        .sql-source > summary {
+            cursor: pointer;
+            padding: 10px 12px;
+            color: var(--muted);
+            font-size: 13px;
+            font-weight: 600;
+            user-select: none;
+        }
+        .sql-source > summary:hover { color: var(--text); }
+        .sql-source[open] > summary { border-bottom: 1px solid var(--border); }
+        .sql-source .code-block { max-height: 280px; overflow: auto; }
+        .code-block {
+            margin: 0;
+            padding: 14px 16px;
+            font-family: Consolas, "Cascadia Mono", monospace;
+            font-size: 13px;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            color: var(--text);
+        }
+        .code-block .tok-key { color: var(--token-key); }
+        .code-block .tok-str { color: var(--token-string); }
+        .code-block .tok-num { color: var(--token-number); }
+        .code-block .tok-bool { color: var(--token-bool); font-weight: 600; }
+        .code-block .tok-null { color: var(--token-null); font-style: italic; }
+        .code-block .tok-kw { color: var(--token-kw); font-weight: 700; }
+        .code-block .tok-comment { color: var(--token-comment); font-style: italic; }
+        .code-block .tok-ident { color: var(--token-ident); }
+        .code-block .tok-op { color: #64748b; }
+
+        .plan-summary {
+            display: grid;
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+        .entity-card {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface);
+            padding: 12px 14px;
+            border-left: 4px solid var(--primary);
+        }
+        .entity-card.child { margin-left: 18px; border-left-color: #3d8f6e; }
+        .entity-card.grandchild { margin-left: 36px; border-left-color: #7aa992; }
+        .entity-head {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 8px 12px;
+            margin-bottom: 8px;
+        }
+        .entity-id {
+            font-weight: 700;
+            font-size: 14px;
+        }
+        .entity-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 999px;
+            background: #e8f2ed;
+            color: var(--primary);
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .entity-badge.muted {
+            background: #eef1f3;
+            color: var(--muted);
+        }
+        .entity-meta {
+            color: var(--muted);
+            font-size: 13px;
+        }
+        .value-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+            gap: 6px 12px;
+            margin: 0;
+        }
+        .value-grid dt {
+            margin: 0;
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .value-grid dd {
+            margin: 0 0 4px;
+            font-family: Consolas, "Cascadia Mono", monospace;
+            font-size: 13px;
+            overflow-wrap: anywhere;
+        }
+
+        .json-tree { padding: 10px 12px 14px; font-family: Consolas, "Cascadia Mono", monospace; font-size: 13px; line-height: 1.55; }
+        .json-tree ul { list-style: none; margin: 0; padding-left: 18px; }
+        .json-tree > ul { padding-left: 0; }
+        .json-tree li { margin: 2px 0; }
+        .json-tree .node-row { display: flex; align-items: flex-start; gap: 4px; }
+        .json-tree .toggle {
+            flex: 0 0 auto;
+            width: 18px;
+            height: 18px;
+            margin-top: 1px;
+            border: 0;
+            border-radius: 3px;
+            padding: 0;
+            background: transparent;
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 700;
+            line-height: 18px;
+            cursor: pointer;
+            min-height: 0;
+        }
+        .json-tree .toggle:hover { background: #e8eef0; color: var(--text); }
+        .json-tree .toggle.leaf { visibility: hidden; }
+        .json-tree .key { color: var(--token-key); }
+        .json-tree .colon { color: #94a3b8; margin: 0 4px 0 2px; }
+        .json-tree .str { color: var(--token-string); }
+        .json-tree .num { color: var(--token-number); }
+        .json-tree .bool { color: var(--token-bool); font-weight: 600; }
+        .json-tree .null { color: var(--token-null); font-style: italic; }
+        .json-tree .meta { color: #94a3b8; }
+        .json-tree .children.collapsed { display: none; }
+
+        .sql-detail { margin-top: 20px; }
+        .toast {
+            position: fixed;
+            right: 20px;
+            bottom: 20px;
+            z-index: 20;
+            padding: 10px 14px;
+            border-radius: 6px;
+            background: #1f2933;
+            color: #fff;
+            font-size: 13px;
+            opacity: 0;
+            transform: translateY(8px);
+            transition: opacity .18s ease, transform .18s ease;
+            pointer-events: none;
+        }
+        .toast.show { opacity: 1; transform: translateY(0); }
+
         @media (max-width: 560px) {
             header > div, main { width: min(100% - 20px, 1040px); }
             main { padding-top: 20px; }
             section { padding: 20px 0; }
             button { flex: 1 1 100%; }
+            .panel-tools button { flex: 0 1 auto; }
+            .entity-card.child, .entity-card.grandchild { margin-left: 10px; }
         }
     </style>
 </head>
@@ -111,12 +380,36 @@
         </section>
 
         <section id="sqlSection" hidden>
-            <label id="artifactLabel" for="sqlOutput">生成结果</label>
-            <textarea id="sqlOutput" spellcheck="false"></textarea>
-            <div id="sqlPreviewSection" class="sql-detail" hidden>
-                <label for="sqlPreviewOutput">具体 SQL</label>
-                <textarea id="sqlPreviewOutput" spellcheck="false" readonly></textarea>
+            <div class="output-panel">
+                <div class="panel-toolbar">
+                    <div class="label-row">
+                        <label id="artifactLabel" for="sqlOutput">生成结果</label>
+                        <span id="artifactMeta" class="panel-meta"></span>
+                    </div>
+                    <div class="panel-tools">
+                        <button id="artifactViewBtn" class="secondary active" type="button">可视化</button>
+                        <button id="artifactEditBtn" class="secondary" type="button">编辑原文</button>
+                        <button id="artifactCopyBtn" class="secondary" type="button">复制</button>
+                    </div>
+                </div>
+                <div id="artifactView" class="code-view"></div>
+                <textarea id="sqlOutput" spellcheck="false" hidden></textarea>
             </div>
+
+            <div id="sqlPreviewSection" class="sql-detail output-panel" hidden>
+                <div class="panel-toolbar">
+                    <div class="label-row">
+                        <label>具体 SQL</label>
+                        <span id="sqlPreviewMeta" class="panel-meta"></span>
+                    </div>
+                    <div class="panel-tools">
+                        <button id="sqlPreviewCopyBtn" class="secondary" type="button">复制</button>
+                    </div>
+                </div>
+                <div id="sqlPreviewView" class="code-view"></div>
+                <textarea id="sqlPreviewOutput" spellcheck="false" readonly hidden></textarea>
+            </div>
+
             <div class="actions">
                 <button id="executeBtn" type="button">预览</button>
                 <button id="confirmBtn" class="confirm" type="button" hidden>确认写入数据库</button>
@@ -129,6 +422,7 @@
             <div id="resultContent"></div>
         </section>
     </main>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
     <script src="app.js"></script>
 </body>
 </html>

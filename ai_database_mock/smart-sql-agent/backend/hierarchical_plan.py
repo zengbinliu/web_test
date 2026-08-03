@@ -10,7 +10,7 @@ from decimal import Decimal
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import networkx as nx
-from sqlalchemy import MetaData, Table
+from sqlalchemy import MetaData, Table, text
 
 try:
     from .field_semantics import generate_field_value, infer_field_semantic
@@ -39,7 +39,18 @@ ALLOWED_ENTITY_FIELDS = {
     "values",
     "generators",
 }
-ALLOWED_GENERATOR_FIELDS = {"strategy", "start", "step", "scope"}
+GENERATOR_STRATEGIES = {"sequence", "lookup", "snowflake", "prefixed_sequence"}
+SEQUENCE_GENERATOR_FIELDS = {"strategy", "start", "step", "scope"}
+LOOKUP_GENERATOR_FIELDS = {"strategy", "table", "column", "offset", "order_by", "assign"}
+SNOWFLAKE_GENERATOR_FIELDS = {"strategy", "scope"}
+PREFIXED_SEQUENCE_GENERATOR_FIELDS = {
+    "strategy",
+    "prefix",
+    "start",
+    "step",
+    "pad",
+    "scope",
+}
 SEQUENCE_NUMERIC_TYPES = {
     "tinyint",
     "smallint",
@@ -54,6 +65,18 @@ SEQUENCE_NUMERIC_TYPES = {
     "real",
     "double",
     "float",
+}
+STRING_LIKE_TYPES = {
+    "char",
+    "varchar",
+    "nvarchar",
+    "nchar",
+    "text",
+    "tinytext",
+    "mediumtext",
+    "longtext",
+    "string",
+    "clob",
 }
 
 
@@ -268,12 +291,179 @@ def _validate_json_value(
     raise DataPlanError(f"{field_name} 必须是合法 JSON 值")
 
 
+def _column_base_type(column: Dict[str, Any]) -> str:
+    return re.split(
+        r"[\s(]",
+        str(column.get("type") or "").lower(),
+        maxsplit=1,
+    )[0]
+
+
+def _parse_scope(raw_generator: Dict[str, Any], location: str, default: str = "parent") -> str:
+    scope = raw_generator.get("scope", default)
+    if scope not in {"parent", "entity"}:
+        raise DataPlanError(f"{location}.scope 只能是 parent 或 entity")
+    return scope
+
+
+def _parse_int_field(
+    raw_generator: Dict[str, Any],
+    field_name: str,
+    location: str,
+    *,
+    default: int,
+    allow_zero: bool = True,
+    minimum: Optional[int] = None,
+) -> int:
+    value = raw_generator.get(field_name, default)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise DataPlanError(f"{location}.{field_name} 必须是整数")
+    if not allow_zero and value == 0:
+        raise DataPlanError(f"{location}.{field_name} 必须是非零整数")
+    if minimum is not None and value < minimum:
+        raise DataPlanError(f"{location}.{field_name} 必须 >= {minimum}")
+    return value
+
+
+def _parse_sequence_generator(
+    raw_generator: Dict[str, Any],
+    column: Dict[str, Any],
+    location: str,
+    table_name: str,
+) -> Dict[str, Any]:
+    unknown_fields = set(raw_generator) - SEQUENCE_GENERATOR_FIELDS
+    if unknown_fields:
+        raise DataPlanError(
+            f"{location} 包含不支持的字段: " + ", ".join(sorted(unknown_fields))
+        )
+    if _column_base_type(column) not in SEQUENCE_NUMERIC_TYPES:
+        raise DataPlanError(
+            f"sequence 生成器只支持数值字段: {table_name}.{column['name']}"
+        )
+    return {
+        "strategy": "sequence",
+        "start": _parse_int_field(raw_generator, "start", location, default=1),
+        "step": _parse_int_field(
+            raw_generator, "step", location, default=1, allow_zero=False
+        ),
+        "scope": _parse_scope(raw_generator, location),
+    }
+
+
+def _parse_lookup_generator(
+    raw_generator: Dict[str, Any],
+    graph: nx.MultiDiGraph,
+    location: str,
+) -> Dict[str, Any]:
+    unknown_fields = set(raw_generator) - LOOKUP_GENERATOR_FIELDS
+    if unknown_fields:
+        raise DataPlanError(
+            f"{location} 包含不支持的字段: " + ", ".join(sorted(unknown_fields))
+        )
+    raw_table = raw_generator.get("table")
+    raw_column = raw_generator.get("column")
+    if not isinstance(raw_table, str) or not raw_table.strip():
+        raise DataPlanError(f"{location}.table 必须是真实表名")
+    if not isinstance(raw_column, str) or not raw_column.strip():
+        raise DataPlanError(f"{location}.column 必须是真实字段名")
+
+    table_lookup = {str(name).lower(): str(name) for name in graph.nodes}
+    table_name = table_lookup.get(raw_table.strip().lower())
+    if table_name is None:
+        raise DataPlanError(f"{location}.table 不是当前关系图中的表: {raw_table}")
+    column_lookup = _table_columns(graph, table_name)
+    column = column_lookup.get(raw_column.strip().lower())
+    if column is None:
+        raise DataPlanError(f"{table_name} 中不存在字段 {raw_column}")
+
+    offset = _parse_int_field(
+        raw_generator, "offset", location, default=1, minimum=1
+    )
+    assign = raw_generator.get("assign", "fixed")
+    if assign not in {"fixed", "each"}:
+        raise DataPlanError(f"{location}.assign 只能是 fixed 或 each")
+    order_by_name = str(column["name"])
+    raw_order_by = raw_generator.get("order_by")
+    if raw_order_by is not None:
+        if not isinstance(raw_order_by, str) or not raw_order_by.strip():
+            raise DataPlanError(f"{location}.order_by 必须是真实字段名")
+        order_column = column_lookup.get(raw_order_by.strip().lower())
+        if order_column is None:
+            raise DataPlanError(f"{table_name} 中不存在排序字段 {raw_order_by}")
+        order_by_name = str(order_column["name"])
+
+    return {
+        "strategy": "lookup",
+        "table": table_name,
+        "column": str(column["name"]),
+        "offset": offset,
+        "order_by": order_by_name,
+        "assign": assign,
+    }
+
+
+def _parse_snowflake_generator(
+    raw_generator: Dict[str, Any],
+    column: Dict[str, Any],
+    location: str,
+    table_name: str,
+) -> Dict[str, Any]:
+    unknown_fields = set(raw_generator) - SNOWFLAKE_GENERATOR_FIELDS
+    if unknown_fields:
+        raise DataPlanError(
+            f"{location} 包含不支持的字段: " + ", ".join(sorted(unknown_fields))
+        )
+    if _column_base_type(column) not in SEQUENCE_NUMERIC_TYPES:
+        raise DataPlanError(
+            f"snowflake 生成器只支持数值字段: {table_name}.{column['name']}"
+        )
+    return {
+        "strategy": "snowflake",
+        "scope": _parse_scope(raw_generator, location, default="entity"),
+    }
+
+
+def _parse_prefixed_sequence_generator(
+    raw_generator: Dict[str, Any],
+    column: Dict[str, Any],
+    location: str,
+    table_name: str,
+) -> Dict[str, Any]:
+    unknown_fields = set(raw_generator) - PREFIXED_SEQUENCE_GENERATOR_FIELDS
+    if unknown_fields:
+        raise DataPlanError(
+            f"{location} 包含不支持的字段: " + ", ".join(sorted(unknown_fields))
+        )
+    if _column_base_type(column) not in STRING_LIKE_TYPES:
+        raise DataPlanError(
+            f"prefixed_sequence 生成器只支持字符串字段: {table_name}.{column['name']}"
+        )
+    prefix = raw_generator.get("prefix")
+    if not isinstance(prefix, str) or prefix == "":
+        raise DataPlanError(f"{location}.prefix 必须是非空字符串")
+    if len(prefix) > 200:
+        raise DataPlanError(f"{location}.prefix 过长")
+    return {
+        "strategy": "prefixed_sequence",
+        "prefix": prefix,
+        "start": _parse_int_field(raw_generator, "start", location, default=1),
+        "step": _parse_int_field(
+            raw_generator, "step", location, default=1, allow_zero=False
+        ),
+        "pad": _parse_int_field(
+            raw_generator, "pad", location, default=3, minimum=0
+        ),
+        "scope": _parse_scope(raw_generator, location, default="entity"),
+    }
+
+
 def _parse_generators(
     raw_generators: Any,
     column_lookup: Dict[str, Dict[str, Any]],
     values: Dict[str, Any],
     location: str,
     table_name: str,
+    graph: nx.MultiDiGraph,
 ) -> Dict[str, Dict[str, Any]]:
     if not isinstance(raw_generators, dict):
         raise DataPlanError(f"{location}.generators 必须是 JSON 对象")
@@ -297,46 +487,28 @@ def _parse_generators(
             raise DataPlanError(
                 f"{location}.generators.{raw_column_name} 必须是 JSON 对象"
             )
-        unknown_fields = set(raw_generator) - ALLOWED_GENERATOR_FIELDS
-        if unknown_fields:
+        generator_location = f"{location}.generators.{raw_column_name}"
+        strategy = raw_generator.get("strategy")
+        if strategy not in GENERATOR_STRATEGIES:
             raise DataPlanError(
-                f"{location}.generators.{raw_column_name} 包含不支持的字段: "
-                + ", ".join(sorted(unknown_fields))
+                f"{generator_location}.strategy 只能是 "
+                + ", ".join(sorted(GENERATOR_STRATEGIES))
             )
-        if raw_generator.get("strategy") != "sequence":
-            raise DataPlanError(
-                f"{location}.generators.{raw_column_name}.strategy 只能是 sequence"
+        if strategy == "sequence":
+            parsed = _parse_sequence_generator(
+                raw_generator, column, generator_location, table_name
             )
-        start = raw_generator.get("start", 1)
-        step = raw_generator.get("step", 1)
-        scope = raw_generator.get("scope", "parent")
-        if isinstance(start, bool) or not isinstance(start, int):
-            raise DataPlanError(
-                f"{location}.generators.{raw_column_name}.start 必须是整数"
+        elif strategy == "lookup":
+            parsed = _parse_lookup_generator(raw_generator, graph, generator_location)
+        elif strategy == "snowflake":
+            parsed = _parse_snowflake_generator(
+                raw_generator, column, generator_location, table_name
             )
-        if isinstance(step, bool) or not isinstance(step, int) or step == 0:
-            raise DataPlanError(
-                f"{location}.generators.{raw_column_name}.step 必须是非零整数"
+        else:
+            parsed = _parse_prefixed_sequence_generator(
+                raw_generator, column, generator_location, table_name
             )
-        if scope not in {"parent", "entity"}:
-            raise DataPlanError(
-                f"{location}.generators.{raw_column_name}.scope 只能是 parent 或 entity"
-            )
-        base_type = re.split(
-            r"[\s(]",
-            str(column.get("type") or "").lower(),
-            maxsplit=1,
-        )[0]
-        if base_type not in SEQUENCE_NUMERIC_TYPES:
-            raise DataPlanError(
-                f"sequence 生成器只支持数值字段: {table_name}.{actual_name}"
-            )
-        generators[actual_name] = {
-            "strategy": "sequence",
-            "start": start,
-            "step": step,
-            "scope": scope,
-        }
+        generators[actual_name] = parsed
     return generators
 
 
@@ -530,6 +702,7 @@ def parse_hierarchical_plan(
             values,
             location,
             table_name,
+            graph,
         )
         normalized.append(
             {
@@ -620,12 +793,14 @@ def parse_hierarchical_plan(
             )
             supplied = all(
                 any(name.lower() == source.lower() for name in item["values"])
+                or any(name.lower() == source.lower() for name in item["generators"])
                 for source, _ in foreign_key.pairs
             )
             if required and not supplied:
                 raise DataPlanError(
                     f"实体 {item['entity_id']} 缺少必填外键 {foreign_key.child_table} -> "
-                    f"{foreign_key.parent_table}；请将该父表加入计划"
+                    f"{foreign_key.parent_table}；请将该父表加入计划，"
+                    "或在 values / generators.lookup 中提供外键值"
                 )
 
         unique_constraints = graph.nodes[item["table"]].get("unique_constraints", [])
@@ -737,7 +912,10 @@ def validate_plan_values(
             )
     if missing_by_entity:
         raise DataPlanError(
-            "分层数据计划缺少无默认值的必填字段: " + "; ".join(missing_by_entity)
+            "分层数据计划缺少无默认值的必填字段: "
+            + "; ".join(missing_by_entity)
+            + "。请在 values 填写具体值，或使用 generators.lookup/"
+            "prefixed_sequence/snowflake/sequence 生成"
         )
     if invalid_by_entity:
         raise DataPlanError(
@@ -889,6 +1067,7 @@ def render_hierarchical_sql(
                 entity_ordinal,
                 sibling_offset + 1,
                 plan.seed,
+                dialect=dialect,
             )
             column_order = [
                 str(column["name"])
@@ -967,6 +1146,59 @@ def _unique_columns(graph: nx.MultiDiGraph, table_name: str) -> set:
     return columns
 
 
+def _sequence_index(generator: Dict[str, Any], ordinal: int, sibling_index: int) -> int:
+    scope = generator.get("scope", "entity")
+    return sibling_index if scope == "parent" else ordinal
+
+
+def _snowflake_id(seed: str, ordinal: int) -> int:
+    """Deterministic snowflake-like 64-bit id for reproducible test data."""
+    digest = hashlib.sha256(f"{seed}:snowflake".encode("utf-8")).digest()
+    worker_id = int.from_bytes(digest[:2], "big") & 0x3FF
+    timestamp_ms = int.from_bytes(digest[2:7], "big") & ((1 << 41) - 1)
+    sequence = (ordinal - 1) & 0xFFF
+    return (timestamp_ms << 22) | (worker_id << 12) | sequence
+
+
+def _prefixed_sequence_value(generator: Dict[str, Any], sequence_index: int) -> str:
+    number = generator["start"] + (sequence_index - 1) * generator["step"]
+    if number < 0:
+        raise DataPlanError("prefixed_sequence 生成了负数序号")
+    pad = generator["pad"]
+    suffix = str(number).zfill(pad) if pad > 0 else str(number)
+    return f"{generator['prefix']}{suffix}"
+
+
+def _lookup_sql(
+    generator: Dict[str, Any],
+    graph: nx.MultiDiGraph,
+    dialect: str,
+) -> str:
+    table_sql = _qualified_table_sql(graph, generator["table"], dialect)
+    column_sql = _quote_identifier(generator["column"], dialect)
+    order_sql = _quote_identifier(generator["order_by"], dialect)
+    offset = generator["offset"] - 1
+    if dialect in {"mssql", "sqlserver"}:
+        return (
+            f"(SELECT {column_sql} FROM {table_sql} "
+            f"ORDER BY {order_sql} "
+            f"OFFSET {offset} ROWS FETCH NEXT 1 ROWS ONLY)"
+        )
+    return (
+        f"(SELECT {column_sql} FROM {table_sql} "
+        f"ORDER BY {order_sql} LIMIT 1 OFFSET {offset})"
+    )
+
+
+def _lookup_cache_key(generator: Dict[str, Any]) -> Tuple[str, str, str, int]:
+    return (
+        generator["table"],
+        generator["column"],
+        generator["order_by"],
+        generator["offset"],
+    )
+
+
 def _row_values(
     graph: nx.MultiDiGraph,
     entity: PlanEntity,
@@ -974,6 +1206,9 @@ def _row_values(
     ordinal: int,
     sibling_index: int,
     seed: str,
+    *,
+    dialect: Optional[str] = None,
+    lookup_resolver=None,
 ) -> Dict[str, Any]:
     values = dict(entity.values)
     if entity.relationship:
@@ -988,11 +1223,42 @@ def _row_values(
                 )
             values[child_column] = parent_lookup[parent_column.lower()]
 
+    resolved_dialect = (
+        dialect
+        or str(graph.graph.get("dialect") or "").lower().split("+", 1)[0]
+        or "sqlite"
+    )
     for name, generator in entity.generators.items():
-        sequence_index = (
-            sibling_index if generator["scope"] == "parent" else ordinal
-        )
-        values[name] = generator["start"] + (sequence_index - 1) * generator["step"]
+        strategy = generator["strategy"]
+        if strategy == "sequence":
+            sequence_index = _sequence_index(generator, ordinal, sibling_index)
+            values[name] = generator["start"] + (sequence_index - 1) * generator["step"]
+            continue
+        if strategy == "prefixed_sequence":
+            sequence_index = _sequence_index(generator, ordinal, sibling_index)
+            values[name] = _prefixed_sequence_value(generator, sequence_index)
+            continue
+        if strategy == "snowflake":
+            sequence_index = _sequence_index(generator, ordinal, sibling_index)
+            values[name] = _snowflake_id(seed, sequence_index)
+            continue
+        if strategy == "lookup":
+            effective = dict(generator)
+            if generator.get("assign") == "each":
+                sequence_index = _sequence_index(
+                    {"scope": "entity"},
+                    ordinal,
+                    sibling_index,
+                )
+                effective["offset"] = generator["offset"] + sequence_index - 1
+            if lookup_resolver is not None:
+                values[name] = lookup_resolver(effective)
+            else:
+                values[name] = SQLReference(
+                    _lookup_sql(effective, graph, resolved_dialect)
+                )
+            continue
+        raise DataPlanError(f"不支持的生成器策略: {strategy}")
 
     unique_columns = _unique_columns(graph, entity.table)
     for column in graph.nodes[entity.table].get("columns", []):
@@ -1100,6 +1366,24 @@ def execute_hierarchical_plan(
 
         inserted_counts = {entity.entity_id: 0 for entity in plan.entities}
         ordinal = 0
+        lookup_cache: Dict[Tuple[str, str, str, int], Any] = {}
+        dialect = str(graph.graph.get("dialect") or "").lower().split("+", 1)[0]
+
+        def resolve_lookup(generator: Dict[str, Any]) -> Any:
+            cache_key = _lookup_cache_key(generator)
+            if cache_key in lookup_cache:
+                return lookup_cache[cache_key]
+            sql = _lookup_sql(generator, graph, dialect or "sqlite")
+            # _lookup_sql wraps a scalar subquery in parentheses; unwrap for execution.
+            query = sql[1:-1] if sql.startswith("(") and sql.endswith(")") else sql
+            value = connection.execute(text(query)).scalar()
+            if value is None:
+                raise DataPlanError(
+                    f"lookup 未找到数据: {generator['table']}.{generator['column']} "
+                    f"第 {generator['offset']} 条（按 {generator['order_by']} 排序）"
+                )
+            lookup_cache[cache_key] = value
+            return value
 
         def insert_instances(
             entity: PlanEntity,
@@ -1119,6 +1403,8 @@ def execute_hierarchical_plan(
                     entity_ordinal,
                     sibling_offset + 1,
                     plan.seed,
+                    dialect=dialect,
+                    lookup_resolver=resolve_lookup,
                 )
                 database_values = {
                     actual_names[name.lower()]: value
