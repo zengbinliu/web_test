@@ -36,9 +36,9 @@ Agently 等价于帮你做了：
 Agently.set_settings(
     "OpenAICompatible",  # 使用 OpenAI 兼容的 API 接口
     {
-        "base_url": "https://web-sub2api.reolink.dev/v1",
-        "api_key": "sk-6888474f211bd32754dcb7b624cf28a231e7328d6647819a4a8cb8853b928581",
-        "model": "gpt-5.6 sol",
+        "base_url": "xxxx",
+        "api_key": "xxxxxx",
+        "model": "xxxxx",
     }
 )
 
