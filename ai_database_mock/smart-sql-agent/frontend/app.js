@@ -1,8 +1,16 @@
 const queryInput = document.getElementById("queryInput");
 const sqlOutput = document.getElementById("sqlOutput");
 const artifactLabel = document.getElementById("artifactLabel");
+const artifactMeta = document.getElementById("artifactMeta");
+const artifactView = document.getElementById("artifactView");
+const artifactViewBtn = document.getElementById("artifactViewBtn");
+const artifactEditBtn = document.getElementById("artifactEditBtn");
+const artifactCopyBtn = document.getElementById("artifactCopyBtn");
 const sqlPreviewSection = document.getElementById("sqlPreviewSection");
 const sqlPreviewOutput = document.getElementById("sqlPreviewOutput");
+const sqlPreviewView = document.getElementById("sqlPreviewView");
+const sqlPreviewMeta = document.getElementById("sqlPreviewMeta");
+const sqlPreviewCopyBtn = document.getElementById("sqlPreviewCopyBtn");
 const sqlSection = document.getElementById("sqlSection");
 const resultSection = document.getElementById("resultSection");
 const resultMessage = document.getElementById("resultMessage");
@@ -10,7 +18,21 @@ const resultContent = document.getElementById("resultContent");
 const generateBtn = document.getElementById("generateBtn");
 const executeBtn = document.getElementById("executeBtn");
 const confirmBtn = document.getElementById("confirmBtn");
+const toastEl = document.getElementById("toast");
+
+const SQL_KEYWORDS = new Set([
+    "select", "from", "where", "and", "or", "not", "insert", "into", "values",
+    "update", "set", "delete", "create", "table", "drop", "alter", "join",
+    "left", "right", "inner", "outer", "on", "as", "order", "by", "group",
+    "having", "limit", "offset", "union", "all", "distinct", "null", "is",
+    "in", "like", "between", "exists", "case", "when", "then", "else", "end",
+    "start", "transaction", "begin", "commit", "rollback", "set", "with",
+]);
+
 let pendingConfirmationToken = null;
+let currentArtifactType = "sql";
+let artifactMode = "view";
+let toastTimer = null;
 
 
 async function postJSON(path, payload) {
@@ -33,6 +55,37 @@ function setBusy(button, busy) {
 }
 
 
+function showToast(message) {
+    toastEl.textContent = message;
+    toastEl.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove("show"), 1600);
+}
+
+
+async function copyText(text) {
+    if (!text) {
+        showToast("没有可复制的内容");
+        return;
+    }
+    try {
+        await navigator.clipboard.writeText(text);
+        showToast("已复制到剪贴板");
+    } catch (_error) {
+        const helper = document.createElement("textarea");
+        helper.value = text;
+        helper.setAttribute("readonly", "");
+        helper.style.position = "fixed";
+        helper.style.left = "-9999px";
+        document.body.appendChild(helper);
+        helper.select();
+        document.execCommand("copy");
+        helper.remove();
+        showToast("已复制到剪贴板");
+    }
+}
+
+
 function showError(message) {
     resultMessage.textContent = message;
     resultMessage.className = "message error";
@@ -45,6 +98,697 @@ function displayValue(value) {
     if (value === null || value === undefined) return "";
     if (typeof value === "object") return JSON.stringify(value);
     return String(value);
+}
+
+
+function escapeHtml(text) {
+    return String(text)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+}
+
+
+function tryParseJSON(text) {
+    try {
+        return JSON.parse(text);
+    } catch (_error) {
+        return null;
+    }
+}
+
+
+function highlightJSON(text) {
+    const parsed = tryParseJSON(text);
+    const pretty = parsed === null ? text : JSON.stringify(parsed, null, 2);
+    const pattern = /("(?:\\.|[^"\\])*")\s*(:)?|\b(true|false|null)\b|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
+    let result = "";
+    let lastIndex = 0;
+    let match;
+    while ((match = pattern.exec(pretty)) !== null) {
+        result += escapeHtml(pretty.slice(lastIndex, match.index));
+        const [, stringLiteral, isKey, keyword] = match;
+        if (stringLiteral) {
+            const cls = isKey ? "tok-key" : "tok-str";
+            result += `<span class="${cls}">${escapeHtml(stringLiteral)}</span>`;
+            if (isKey) result += isKey;
+        } else if (keyword === "null") {
+            result += `<span class="tok-null">${keyword}</span>`;
+        } else if (keyword) {
+            result += `<span class="tok-bool">${keyword}</span>`;
+        } else {
+            result += `<span class="tok-num">${escapeHtml(match[0])}</span>`;
+        }
+        lastIndex = pattern.lastIndex;
+    }
+    result += escapeHtml(pretty.slice(lastIndex));
+    return result;
+}
+
+
+function splitSQLList(part) {
+    const items = [];
+    let current = "";
+    let quote = null;
+    let depth = 0;
+    for (let i = 0; i < part.length; i += 1) {
+        const ch = part[i];
+        if (quote) {
+            current += ch;
+            if (ch === "'" && quote === "'" && part[i + 1] === "'") {
+                current += part[i + 1];
+                i += 1;
+                continue;
+            }
+            if (ch === quote && part[i - 1] !== "\\") quote = null;
+            continue;
+        }
+        if (ch === "'" || ch === '"' || ch === "`") {
+            quote = ch;
+            current += ch;
+            continue;
+        }
+        if (ch === "(") {
+            depth += 1;
+            current += ch;
+            continue;
+        }
+        if (ch === ")") {
+            depth = Math.max(0, depth - 1);
+            current += ch;
+            continue;
+        }
+        if (ch === "," && depth === 0) {
+            items.push(current.trim());
+            current = "";
+            continue;
+        }
+        current += ch;
+    }
+    if (current.trim()) items.push(current.trim());
+    return items;
+}
+
+
+function readBalancedParens(text, startIndex) {
+    if (text[startIndex] !== "(") return null;
+    let depth = 0;
+    let quote = null;
+    for (let i = startIndex; i < text.length; i += 1) {
+        const ch = text[i];
+        if (quote) {
+            if (ch === "'" && quote === "'" && text[i + 1] === "'") {
+                i += 1;
+                continue;
+            }
+            if (ch === quote && text[i - 1] !== "\\") quote = null;
+            continue;
+        }
+        if (ch === "'" || ch === '"' || ch === "`") {
+            quote = ch;
+            continue;
+        }
+        if (ch === "(") depth += 1;
+        if (ch === ")") {
+            depth -= 1;
+            if (depth === 0) {
+                return { inner: text.slice(startIndex + 1, i), end: i + 1 };
+            }
+        }
+    }
+    return null;
+}
+
+
+function skipSQLTrivia(text, index) {
+    let i = index;
+    while (i < text.length) {
+        if (/\s/.test(text[i])) {
+            i += 1;
+            continue;
+        }
+        if (text.startsWith("--", i)) {
+            const newline = text.indexOf("\n", i);
+            i = newline === -1 ? text.length : newline + 1;
+            continue;
+        }
+        if (text.startsWith("/*", i)) {
+            const end = text.indexOf("*/", i + 2);
+            i = end === -1 ? text.length : end + 2;
+            continue;
+        }
+        break;
+    }
+    return i;
+}
+
+
+function unwrapSQLName(name) {
+    return String(name || "")
+        .trim()
+        .replace(/^`([^`]+)`$/, "$1")
+        .replace(/^"([^"]+)"$/, "$1")
+        .replace(/^'([^']+)'$/, "$1");
+}
+
+
+function displaySQLValue(raw) {
+    const value = String(raw || "").trim();
+    if (!value || /^null$/i.test(value)) {
+        return { text: "NULL", kind: "null" };
+    }
+    if (
+        (value.startsWith("'") && value.endsWith("'"))
+        || (value.startsWith('"') && value.endsWith('"'))
+    ) {
+        const unquoted = value
+            .slice(1, -1)
+            .replace(/''/g, "'")
+            .replace(/\\'/g, "'");
+        return { text: unquoted, kind: "str" };
+    }
+    if (/^-?\d+(?:\.\d+)?$/.test(value)) {
+        return { text: value, kind: "num" };
+    }
+    return { text: value, kind: "other" };
+}
+
+
+function parseInsertStatements(sql) {
+    const text = String(sql || "");
+    const inserts = [];
+    const lower = text.toLowerCase();
+    let cursor = 0;
+
+    while (cursor < text.length) {
+        const found = lower.indexOf("insert", cursor);
+        if (found === -1) break;
+        if (found > 0 && /[a-z0-9_]/i.test(text[found - 1])) {
+            cursor = found + 6;
+            continue;
+        }
+
+        let i = skipSQLTrivia(text, found + 6);
+        if (!lower.startsWith("into", i) || /[a-z0-9_]/i.test(text[i + 4] || "")) {
+            cursor = found + 6;
+            continue;
+        }
+        i = skipSQLTrivia(text, i + 4);
+
+        const tableMatch = text.slice(i).match(/^(?:`[^`]+`|"[^"]+"|[a-zA-Z_]\w*)(?:\s*\.\s*(?:`[^`]+`|"[^"]+"|[a-zA-Z_]\w*))?/);
+        if (!tableMatch) {
+            cursor = found + 6;
+            continue;
+        }
+        const table = tableMatch[0].replace(/\s+/g, "");
+        i = skipSQLTrivia(text, i + tableMatch[0].length);
+
+        const columnsPart = readBalancedParens(text, i);
+        if (!columnsPart) {
+            cursor = found + 6;
+            continue;
+        }
+        i = skipSQLTrivia(text, columnsPart.end);
+        if (!lower.startsWith("values", i) || /[a-z0-9_]/i.test(text[i + 6] || "")) {
+            cursor = found + 6;
+            continue;
+        }
+        i = skipSQLTrivia(text, i + 6);
+
+        const columns = splitSQLList(columnsPart.inner).map(unwrapSQLName);
+        const rows = [];
+        while (i < text.length) {
+            i = skipSQLTrivia(text, i);
+            const rowPart = readBalancedParens(text, i);
+            if (!rowPart) break;
+            rows.push(splitSQLList(rowPart.inner));
+            i = skipSQLTrivia(text, rowPart.end);
+            if (text[i] === ",") {
+                i += 1;
+                continue;
+            }
+            break;
+        }
+
+        if (columns.length > 0 && rows.length > 0) {
+            inserts.push({ table, columns, rows });
+        }
+        cursor = Math.max(i, found + 6);
+    }
+    return inserts;
+}
+
+
+function groupInsertStatements(inserts) {
+    const groups = [];
+    const indexByKey = new Map();
+    for (const insert of inserts) {
+        const key = `${insert.table}|${insert.columns.join("\0")}`;
+        let group = indexByKey.get(key);
+        if (!group) {
+            group = {
+                table: insert.table,
+                columns: insert.columns,
+                rows: [],
+            };
+            indexByKey.set(key, group);
+            groups.push(group);
+        }
+        group.rows.push(...insert.rows);
+    }
+    return groups;
+}
+
+
+function highlightSQL(sql) {
+    const formatted = String(sql || "").replace(/\r\n/g, "\n");
+    const pattern = /(--[^\n]*)|('(?:''|[^'])*'|`[^`]*`|"(?:\\.|[^"\\])*")|\b[a-zA-Z_][\w$]*\b|-?\d+(?:\.\d+)?/g;
+    let result = "";
+    let lastIndex = 0;
+    let match;
+    while ((match = pattern.exec(formatted)) !== null) {
+        result += escapeHtml(formatted.slice(lastIndex, match.index));
+        const [token, comment, quoted, word] = match;
+        if (comment) {
+            result += `<span class="tok-comment">${escapeHtml(comment)}</span>`;
+        } else if (quoted) {
+            result += `<span class="tok-str">${escapeHtml(quoted)}</span>`;
+        } else if (word && SQL_KEYWORDS.has(word.toLowerCase())) {
+            result += `<span class="tok-kw">${escapeHtml(word)}</span>`;
+        } else if (/^-?\d/.test(token)) {
+            result += `<span class="tok-num">${escapeHtml(token)}</span>`;
+        } else {
+            result += `<span class="tok-ident">${escapeHtml(token)}</span>`;
+        }
+        lastIndex = pattern.lastIndex;
+    }
+    result += escapeHtml(formatted.slice(lastIndex));
+    return result;
+}
+
+
+function renderInsertGroups(groups) {
+    const fragment = document.createDocumentFragment();
+    for (const group of groups) {
+        const block = document.createElement("section");
+        block.className = "insert-block";
+
+        const head = document.createElement("div");
+        head.className = "insert-head";
+        const tableName = document.createElement("span");
+        tableName.className = "table-name";
+        tableName.textContent = group.table;
+        const rowCount = document.createElement("span");
+        rowCount.className = "row-count";
+        rowCount.textContent = `${group.rows.length} 行 · ${group.columns.length} 列`;
+        head.append(tableName, rowCount);
+        block.appendChild(head);
+
+        const wrap = document.createElement("div");
+        wrap.className = "insert-table-wrap";
+        const table = document.createElement("table");
+        table.className = "insert-table";
+
+        const thead = document.createElement("thead");
+        const headingRow = document.createElement("tr");
+        const idxTh = document.createElement("th");
+        idxTh.className = "row-idx";
+        idxTh.textContent = "#";
+        headingRow.appendChild(idxTh);
+        for (const column of group.columns) {
+            const th = document.createElement("th");
+            th.textContent = column;
+            th.title = column;
+            headingRow.appendChild(th);
+        }
+        thead.appendChild(headingRow);
+
+        const tbody = document.createElement("tbody");
+        group.rows.forEach((row, rowIndex) => {
+            const tr = document.createElement("tr");
+            const idxTd = document.createElement("td");
+            idxTd.className = "row-idx";
+            idxTd.textContent = String(rowIndex + 1);
+            tr.appendChild(idxTd);
+            group.columns.forEach((_, columnIndex) => {
+                const td = document.createElement("td");
+                const displayed = displaySQLValue(row[columnIndex]);
+                td.className = displayed.kind;
+                td.textContent = displayed.text;
+                td.title = displayed.text;
+                tr.appendChild(td);
+            });
+            tbody.appendChild(tr);
+        });
+
+        table.append(thead, tbody);
+        wrap.appendChild(table);
+        block.appendChild(wrap);
+        fragment.appendChild(block);
+    }
+    return fragment;
+}
+
+
+function renderSQLVisual(sql) {
+    const container = document.createElement("div");
+    container.className = "sql-visual";
+    const groups = groupInsertStatements(parseInsertStatements(sql));
+    const totalRows = groups.reduce((sum, group) => sum + group.rows.length, 0);
+
+    if (groups.length > 0) {
+        container.appendChild(renderInsertGroups(groups));
+    }
+
+    const details = document.createElement("details");
+    details.className = "sql-source";
+    if (groups.length === 0) details.open = true;
+    const summary = document.createElement("summary");
+    summary.textContent = groups.length > 0 ? "查看 SQL 原文" : "SQL";
+    details.appendChild(summary);
+    details.appendChild(createCodePre(highlightSQL(sql)));
+    container.appendChild(details);
+
+    return {
+        element: container,
+        tableCount: groups.length,
+        rowCount: totalRows,
+    };
+}
+
+
+function createCodePre(html) {
+    const pre = document.createElement("pre");
+    pre.className = "code-block";
+    pre.innerHTML = html;
+    return pre;
+}
+
+
+function renderJSONValue(parent, value, keyName, depth = 0) {
+    const li = document.createElement("li");
+    const row = document.createElement("div");
+    row.className = "node-row";
+
+    const isObject = value !== null && typeof value === "object";
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = isObject ? "toggle" : "toggle leaf";
+    toggle.textContent = isObject ? "▾" : "·";
+    row.appendChild(toggle);
+
+    if (keyName !== undefined) {
+        const keySpan = document.createElement("span");
+        keySpan.className = "key";
+        keySpan.textContent = JSON.stringify(keyName);
+        row.appendChild(keySpan);
+        const colon = document.createElement("span");
+        colon.className = "colon";
+        colon.textContent = ":";
+        row.appendChild(colon);
+    }
+
+    if (!isObject) {
+        const valueSpan = document.createElement("span");
+        if (value === null) {
+            valueSpan.className = "null";
+            valueSpan.textContent = "null";
+        } else if (typeof value === "string") {
+            valueSpan.className = "str";
+            valueSpan.textContent = JSON.stringify(value);
+        } else if (typeof value === "number") {
+            valueSpan.className = "num";
+            valueSpan.textContent = String(value);
+        } else if (typeof value === "boolean") {
+            valueSpan.className = "bool";
+            valueSpan.textContent = String(value);
+        } else {
+            valueSpan.textContent = String(value);
+        }
+        row.appendChild(valueSpan);
+        li.appendChild(row);
+        parent.appendChild(li);
+        return;
+    }
+
+    const meta = document.createElement("span");
+    meta.className = "meta";
+    const entries = Array.isArray(value)
+        ? value.map((item, index) => [index, item])
+        : Object.entries(value);
+    meta.textContent = Array.isArray(value)
+        ? `Array(${entries.length})`
+        : `Object{${entries.length}}`;
+    row.appendChild(meta);
+    li.appendChild(row);
+
+    const children = document.createElement("ul");
+    children.className = "children";
+    const collapsedByDefault = depth >= 2 && entries.length > 0;
+    if (collapsedByDefault) {
+        children.classList.add("collapsed");
+        toggle.textContent = "▸";
+    }
+    for (const [childKey, childValue] of entries) {
+        renderJSONValue(children, childValue, childKey, depth + 1);
+    }
+    li.appendChild(children);
+
+    toggle.addEventListener("click", () => {
+        const collapsed = children.classList.toggle("collapsed");
+        toggle.textContent = collapsed ? "▸" : "▾";
+    });
+
+    parent.appendChild(li);
+}
+
+
+function renderJSONTree(data) {
+    const wrap = document.createElement("div");
+    wrap.className = "json-tree";
+    const root = document.createElement("ul");
+    renderJSONValue(root, data, undefined, 0);
+    wrap.appendChild(root);
+    return wrap;
+}
+
+
+function countModeLabel(mode) {
+    return mode === "at_least" ? "至少" : "精确";
+}
+
+
+function formatGeneratorSummary(generator) {
+    if (!generator || typeof generator !== "object") return displayValue(generator);
+    const strategy = generator.strategy || "?";
+    if (strategy === "lookup") {
+        const assign = generator.assign === "each" ? "逐行分配" : "固定一条";
+        return `lookup ${generator.table}.${generator.column} 从第 ${generator.offset} 条（${assign}）`;
+    }
+    if (strategy === "prefixed_sequence") {
+        return `prefixed_sequence ${generator.prefix}*`;
+    }
+    if (strategy === "snowflake") {
+        return "snowflake";
+    }
+    if (strategy === "sequence") {
+        return `sequence start=${generator.start} step=${generator.step}`;
+    }
+    return displayValue(generator);
+}
+
+
+function depthClass(depth) {
+    if (depth <= 0) return "";
+    if (depth === 1) return "child";
+    return "grandchild";
+}
+
+
+function renderPlanSummary(plan) {
+    const entities = Array.isArray(plan.entities) ? plan.entities : [];
+    if (entities.length === 0) return null;
+
+    const byId = new Map(entities.map((entity) => [entity.id, entity]));
+    const childrenMap = new Map(entities.map((entity) => [entity.id, []]));
+    const roots = [];
+    for (const entity of entities) {
+        if (entity.parent && byId.has(entity.parent)) {
+            childrenMap.get(entity.parent).push(entity);
+        } else {
+            roots.push(entity);
+        }
+    }
+
+    const container = document.createElement("div");
+    container.className = "plan-summary";
+
+    const walk = (entity, depth) => {
+        const card = document.createElement("article");
+        card.className = `entity-card ${depthClass(depth)}`.trim();
+
+        const head = document.createElement("div");
+        head.className = "entity-head";
+
+        const idEl = document.createElement("span");
+        idEl.className = "entity-id";
+        idEl.textContent = entity.id || entity.table || "未命名层级";
+        head.appendChild(idEl);
+
+        if (entity.table) {
+            const tableBadge = document.createElement("span");
+            tableBadge.className = "entity-badge";
+            tableBadge.textContent = entity.table;
+            head.appendChild(tableBadge);
+        }
+
+        const countBadge = document.createElement("span");
+        countBadge.className = "entity-badge muted";
+        if (entity.parent) {
+            countBadge.textContent = `${countModeLabel(entity.count_mode)} × ${entity.count_per_parent ?? "?"} / 上级`;
+        } else {
+            countBadge.textContent = `${countModeLabel(entity.count_mode)} × ${entity.count ?? "?"}`;
+        }
+        head.appendChild(countBadge);
+
+        card.appendChild(head);
+
+        const meta = document.createElement("div");
+        meta.className = "entity-meta";
+        meta.textContent = entity.parent
+            ? `上级：${entity.parent}`
+            : "根层级";
+        card.appendChild(meta);
+
+        const values = entity.values && typeof entity.values === "object" ? entity.values : null;
+        if (values && Object.keys(values).length > 0) {
+            const dl = document.createElement("dl");
+            dl.className = "value-grid";
+            for (const [key, value] of Object.entries(values)) {
+                const dt = document.createElement("dt");
+                dt.textContent = key;
+                const dd = document.createElement("dd");
+                dd.textContent = displayValue(value);
+                dl.append(dt, dd);
+            }
+            card.appendChild(dl);
+        }
+
+        const generators = entity.generators && typeof entity.generators === "object"
+            ? entity.generators
+            : null;
+        if (generators && Object.keys(generators).length > 0) {
+            const dl = document.createElement("dl");
+            dl.className = "value-grid";
+            for (const [key, generator] of Object.entries(generators)) {
+                const dt = document.createElement("dt");
+                dt.textContent = `${key}（生成器）`;
+                const dd = document.createElement("dd");
+                dd.textContent = formatGeneratorSummary(generator);
+                dl.append(dt, dd);
+            }
+            card.appendChild(dl);
+        }
+
+        container.appendChild(card);
+        for (const child of childrenMap.get(entity.id) || []) {
+            walk(child, depth + 1);
+        }
+    };
+
+    for (const root of roots) walk(root, 0);
+    return container;
+}
+
+
+function setArtifactMode(mode) {
+    artifactMode = mode;
+    const editing = mode === "edit";
+    sqlOutput.hidden = !editing;
+    artifactView.hidden = editing;
+    artifactViewBtn.classList.toggle("active", !editing);
+    artifactEditBtn.classList.toggle("active", editing);
+    if (editing) {
+        sqlOutput.focus();
+    }
+}
+
+
+function refreshArtifactView() {
+    const text = sqlOutput.value;
+    artifactView.replaceChildren();
+
+    if (!text.trim()) {
+        artifactMeta.textContent = "";
+        artifactView.appendChild(createCodePre(""));
+        return;
+    }
+
+    if (currentArtifactType === "data_plan") {
+        const parsed = tryParseJSON(text);
+        if (parsed && typeof parsed === "object") {
+            const entities = Array.isArray(parsed.entities) ? parsed.entities : [];
+            artifactMeta.textContent = `${entities.length} 层实体`;
+            const summary = renderPlanSummary(parsed);
+            if (summary) artifactView.appendChild(summary);
+            artifactView.appendChild(renderJSONTree(parsed));
+            return;
+        }
+        artifactMeta.textContent = "JSON 解析失败，显示原文";
+        artifactView.appendChild(createCodePre(highlightJSON(text)));
+        return;
+    }
+
+    const visual = renderSQLVisual(text);
+    if (visual.rowCount > 0) {
+        artifactMeta.textContent = `${visual.tableCount} 张表 · ${visual.rowCount} 行`;
+    } else {
+        const statementCount = text.split(";").map((part) => part.trim()).filter(Boolean).length;
+        artifactMeta.textContent = `${statementCount} 条语句`;
+    }
+    artifactView.appendChild(visual.element);
+}
+
+
+function refreshSqlPreviewView() {
+    const text = sqlPreviewOutput.value;
+    sqlPreviewView.replaceChildren();
+    if (!text.trim()) {
+        sqlPreviewMeta.textContent = "";
+        return;
+    }
+    const visual = renderSQLVisual(text);
+    if (visual.rowCount > 0) {
+        sqlPreviewMeta.textContent = `${visual.tableCount} 张表 · ${visual.rowCount} 行（表格视图）`;
+    } else {
+        const statementCount = text
+            .split(";")
+            .map((part) => part.trim())
+            .filter((part) => part && !part.startsWith("--"))
+            .length;
+        sqlPreviewMeta.textContent = `${statementCount} 条语句`;
+    }
+    sqlPreviewView.appendChild(visual.element);
+}
+
+
+function setArtifact(text, artifactType) {
+    currentArtifactType = artifactType || (tryParseJSON(text)?.kind ? "data_plan" : "sql");
+    sqlOutput.value = text || "";
+    artifactLabel.textContent = currentArtifactType === "data_plan"
+        ? "生成的分层数据计划"
+        : "生成的 SQL";
+    refreshArtifactView();
+    setArtifactMode("view");
+}
+
+
+function setSqlPreview(text) {
+    sqlPreviewOutput.value = text || "";
+    const hasPreview = Boolean(text && text.trim());
+    sqlPreviewSection.hidden = !hasPreview;
+    if (hasPreview) refreshSqlPreviewView();
 }
 
 
@@ -102,10 +846,7 @@ function renderSingleResult(result, parent) {
         case "insert_preview": {
             const prefix = result.auto_created_dependency ? "自动补齐依赖：" : "";
             appendSummary(parent, `${prefix}即将执行 INSERT，预计插入 ${result.affected_rows} 行。`);
-            const pre = document.createElement("pre");
-            pre.className = "sql-preview";
-            pre.textContent = result.sql;
-            parent.appendChild(pre);
+            parent.appendChild(renderSQLVisual(result.sql).element);
             break;
         }
         case "write_preview":
@@ -164,7 +905,7 @@ function renderSingleResult(result, parent) {
         default: {
             const pre = document.createElement("pre");
             pre.className = "sql-preview";
-            pre.textContent = JSON.stringify(result, null, 2);
+            pre.innerHTML = highlightJSON(JSON.stringify(result, null, 2));
             parent.appendChild(pre);
         }
     }
@@ -218,18 +959,15 @@ async function generateSQL() {
     try {
         const data = await postJSON("/generate", { natural_language: query });
         if (!data.success) {
+            pendingConfirmationToken = null;
+            confirmBtn.hidden = true;
             showError(data.message);
             return;
         }
-        sqlOutput.value = data.data.sql;
-        artifactLabel.textContent = data.data.artifact_type === "data_plan"
-            ? "生成的分层数据计划"
-            : "生成的 SQL";
-        sqlPreviewOutput.value = data.data.sql_preview || "";
-        sqlPreviewSection.hidden = !data.data.sql_preview;
+        setArtifact(data.data.sql, data.data.artifact_type);
+        setSqlPreview(data.data.sql_preview || "");
         sqlSection.hidden = false;
         resultSection.hidden = true;
-        sqlOutput.focus();
     } catch (error) {
         showError(`生成失败：${error.message}`);
     } finally {
@@ -265,11 +1003,10 @@ async function executeSQL(confirm) {
         renderResult(data.data);
         const plannedArtifact = data.data.planned_artifact || data.data.planned_sql;
         if (data.requires_confirmation && plannedArtifact) {
-            sqlOutput.value = plannedArtifact;
+            setArtifact(plannedArtifact, currentArtifactType);
         }
         if (data.data.sql_preview) {
-            sqlPreviewOutput.value = data.data.sql_preview;
-            sqlPreviewSection.hidden = false;
+            setSqlPreview(data.data.sql_preview);
         }
         pendingConfirmationToken = data.requires_confirmation
             ? data.data.confirmation_token
@@ -287,6 +1024,13 @@ async function executeSQL(confirm) {
 generateBtn.addEventListener("click", generateSQL);
 executeBtn.addEventListener("click", () => executeSQL(false));
 confirmBtn.addEventListener("click", () => executeSQL(true));
+artifactViewBtn.addEventListener("click", () => {
+    refreshArtifactView();
+    setArtifactMode("view");
+});
+artifactEditBtn.addEventListener("click", () => setArtifactMode("edit"));
+artifactCopyBtn.addEventListener("click", () => copyText(sqlOutput.value));
+sqlPreviewCopyBtn.addEventListener("click", () => copyText(sqlPreviewOutput.value));
 sqlOutput.addEventListener("input", () => {
     pendingConfirmationToken = null;
     confirmBtn.hidden = true;
