@@ -1,0 +1,20 @@
+# 预期业务失败 / 探活超时：不走 AI 自愈
+# 定位器未必坏了，只是当前页面状态导致元素暂时不可见。
+#
+# skip_elements 条目：
+#   - "front/login/login_signup_page.yml/verify_button"  # yaml相对路径/元素key
+#   - "verify_button"                                    # 仅 key（所有 YAML，慎用）
+#
+# skip_when_page_text：页面可见文案命中任一子串时，本次失败跳过自愈
+
+skip_elements:
+  # Send Code 后因频率限制未进入验证码页，等待 Verify 超时属预期
+  - front/login/login_signup_page.yml/verify_button
+  # 探测是否出现 2FA；超时后走「可能已登录」分支，属预期
+  - front/login/login_signup_page.yml/send_code_button
+
+skip_when_page_text:
+  - "请求过于频繁"
+  - "Too many requests"
+  - "too frequently"
+  - "rate limit"
