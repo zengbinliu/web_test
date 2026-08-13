@@ -2,7 +2,7 @@
 
 > 面向测试开发工程师，从零开始学习 RAG 知识库的原理、脚本开发与核心概念。
 >
-> 整理日期：2026-08-05
+> 整理日期：2026-08-05（十三章对照按 2026-08 askreolink 实现补充）
 
 ---
 
@@ -30,6 +30,8 @@
 ### 1.1 一句话定义
 
 **RAG（Retrieval-Augmented Generation，检索增强生成）** = 先从知识库里**检索**相关内容，再让大模型**基于这些内容**生成答案。
+
+「检索质量 > LLM 能力」
 
 ```
 传统 LLM：问题 → 模型凭记忆回答（容易编造、知识过时）
@@ -684,51 +686,262 @@ top_p=0.95
 
 ## 十三、Reolink 知识库对照
 
-`D:\reolink_knowledge` 是一套完整 RAG 实现：
+> 对照对象：`D:\reolink_knowledge` 当前 askreolink 实现（截至 2026-08）。  
+> 本章把前面教程里的通用概念，一一映射到真实代码与数据文件，方便「读教程 → 对照源码 → 动手跑」。
+
+### 13.1 这套 KB 解决什么问题
+
+面向 **Reolink 禅道测试用例** 的本地问答 / 检索：
+
+- 产品 ID `42`，根模块「全量用例」导出后的结构化用例
+- 补充知识：JMX 接口自动化场景、站点爬取等（`supplemental`）
+- MCP / 人工写入的逻辑补丁（`kb_logic_patches.jsonl` → `source_type=patch`）
+
+默认走 **RAG 混合检索**（关键词打分 + 稀疏向量），再按是否配置 LLM 选择 **Cursor Cloud Agent / OpenAI 兼容 API / 抽取式回答**。
+
+Cursor 规则：提示词以 `askreolink` 开头时，直接调用：
+
+```bash
+python "D:\reolink_knowledge\ask_reolink_testcase_kb.py" "你的问题"
+# 或 PATH 中的启动器
+askreolink "你的问题"
+```
+
+### 13.2 目录与职责（对照第七章 Demo）
+
+教程 Demo 是 `ingest.py` + `ask.py` + `rag_utils.py`；Reolink 拆成更清晰的生产结构：
 
 ```
 D:\reolink_knowledge\
-├── rag_core.py              # 核心：切分、向量化、RAGIndex、hybrid_search
-├── build_rag_index.py       # 离线建库入口
-├── ask_reolink_testcase_kb.py  # 在线问答入口（禅道用例 KB）
-├── rag_llm.py               # LLM 封装
-├── cursor_rag_client.py     # 给 Cursor Agent 用的 Prompt 封装
+├── ask_reolink_testcase_kb.py   # 在线 Query 入口：加载用例、关键词分、意图答案、拼回答
+├── build_rag_index.py           # 离线 Indexing 入口：强制/增量建索引
+├── rag_core.py                  # 切分、稀疏向量、RAGIndex、hybrid_search
+├── rag_llm.py                   # LLM 配置、Prompt、生成与抽取式降级
+├── cursor_rag_client.py         # Cursor Cloud Agents API（创建无仓库 Agent 生成答案）
+├── export_zentao_module_kb.py   # 从禅道导出语料（Indexing 上游）
+├── import_jmx_scenarios.py      # JMX → supplemental 知识
+├── llm.env / llm.env.example    # LLM 密钥与 provider
+├── kb_logic_patches.jsonl       # 可选：逻辑补丁（环境变量 REOLINK_KB_PATCHES_PATH 可改路径）
+├── corpus/module-*.md           # 按模块的人类可读 Markdown（导出产物，非检索主索引）
 └── data/
-    ├── testcases.jsonl      # 原始知识
-    └── rag/
-        ├── chunks.jsonl     # 切块元数据
-        ├── vectors.npy      # 向量矩阵
-        └── manifest.json    # 索引元信息
+    ├── testcases.jsonl          # 主知识：禅道用例
+    ├── supplemental_cases.json  # 补充知识
+    ├── manifest.json            # 导出元信息（用例规模等）
+    └── rag/                     # RAG 索引产物
+        ├── chunks.jsonl
+        ├── vectors.npy
+        └── manifest.json        # chunk_total / case_total / dim / generated_at
 ```
 
-| RAG 概念 | 项目中的实现 |
-|----------|-------------|
-| 原始数据 | `data/testcases.jsonl` |
-| 切分 | `rag_core.py` → `case_to_chunks()` |
-| 向量化 | `text_to_vector()` / embedding |
-| 索引存储 | `data/rag/chunks.jsonl` + `vectors.npy` |
-| 建库脚本 | `build_rag_index.py` |
-| 检索 | `hybrid_search_cases()` |
-| 问答 | `ask_reolink_testcase_kb.py` |
-| LLM 生成 | `rag_llm.py` |
+| 教程 Demo | Reolink 对应 |
+|-----------|--------------|
+| `ingest.py` | `build_rag_index.py` + `rag_core.build_or_load_index()` |
+| `ask.py` | `ask_reolink_testcase_kb.py` |
+| `rag_utils.py` | `rag_core.py` |
+| `rag_llm.py`（教程示例） | `rag_llm.py` + `cursor_rag_client.py` |
+| `data/docs/*.md` | `data/testcases.jsonl` (+ supplemental / patches) |
+| `index/chunks.jsonl` + `vectors.npy` | `data/rag/chunks.jsonl` + `vectors.npy` |
 
-**建议学习顺序：**
+### 13.3 概念对照表
 
-1. 先理解 Indexing / Query 两阶段
-2. 跑一遍：`python build_rag_index.py --rebuild`
-3. 再跑：`python ask_reolink_testcase_kb.py "你的问题"`
-4. 对照 `rag_core.py` 看检索和切分怎么实现
+| RAG 概念（前文） | Reolink 实现 | 关键代码 / 路径 |
+|------------------|--------------|-----------------|
+| Document | 一条禅道用例 / supplemental / patch | `load_cases()` |
+| Chunk | 按步骤数切的 case / summary / step | `case_to_chunks()` |
+| Embedding | **不是** sentence-transformers；是 **hash 稀疏向量**（类 TF-IDF） | `text_to_vector()`，`dim=8192` |
+| Vector Index | `numpy` 矩阵 + jsonl 元数据 | `RAGIndex`，`data/rag/` |
+| 关键词检索 | 字段加权打分（标题/模块/步骤/预期…） | `score_case()` → `search_cases()` |
+| Hybrid Search | 归一化后加权融合 | `merge_hybrid_results()`：`keyword 0.55` + `vector 0.45` |
+| Top-K | CLI `--top`（默认 5）；向量侧粗召回更大 | `hybrid_search_cases` 内 `top_n*3` / `top_n*4` |
+| Augmentation | 拼成带 case_id / 链接的依据块 | `format_context_blocks()` |
+| Generation | Cursor Agent 或 OpenAI；失败则抽取式 | `generate_rag_answer()` / `synthesize_extractive_answer()` |
+| 领域后处理 | 套餐类型 / 切换 / 对比 / 生效 / 限制等意图答案 | `build_direct_answer()` 一族 |
+| 索引缓存 | 进程内模块级缓存，避免每次 query 重建 | `RAG_INDEX` + `get_rag_index()` |
 
-**领域化 Chunk 策略（测试用例 KB）：**
+当前索引规模示例（以本机 `data/rag/manifest.json` 为准）：
+
+```json
+{
+  "generated_at": "2026-07-10 16:18:55",
+  "chunk_total": 10782,
+  "case_total": 2836,
+  "dim": 8192
+}
+```
+
+### 13.4 数据源：三路合并进同一个 case 列表
+
+`load_cases()` 顺序加载并统一 `prepare_case()`（预计算 `_search` 规范化字段，供关键词打分）：
+
+| 来源 | 路径 | `source_type` | 用途 |
+|------|------|---------------|------|
+| 禅道用例 | `data/testcases.jsonl` | `testcase` | 主库 |
+| 补充知识 | `data/supplemental_cases.json` | `supplemental` | JMX 场景、爬取等 |
+| 逻辑补丁 | `kb_logic_patches.jsonl`（可配置） | `patch` | MCP/人工更正，合成伪 case_id |
+
+导出与补充入库后，需要重建向量索引：
+
+```bash
+python "D:\reolink_knowledge\import_jmx_scenarios.py" --merge
+python "D:\reolink_knowledge\build_rag_index.py" --rebuild
+# 或
+askreolink --rebuild-index
+```
+
+### 13.5 Indexing：建库怎么走
 
 ```
-步骤数 ≤ 4  → 整 case 一个 chunk
-步骤数 > 4  → summary chunk + 每步一个 chunk
+testcases + supplemental + patches
+        ↓  load_cases() / prepare_case()
+结构化 case 列表
+        ↓  case_to_chunks()
+chunks（带 case_id、chunk_type、module、link、text）
+        ↓  text_to_vector() 批量编码
+vectors.npy（float32，形状约 [chunk_total, 8192]）
+        ↓  RAGIndex.save()
+data/rag/{chunks.jsonl, vectors.npy, manifest.json}
 ```
 
-这比「固定 500 字切」更适合结构化测试数据。
+**领域化 Chunk（相对「固定 500 字」的升级）：**
+
+```
+步骤数 ≤ 4（DEFAULT_STEP_CHUNK_THRESHOLD）
+  → 整 case 一个 chunk（chunk_type=case）
+
+步骤数 > 4
+  → 1 个 summary chunk（仅 header：标题/模块/前置/关键词）
+  → 每步 1 个 step chunk（header + 该步「步骤/预期」）
+```
+
+**向量化要点（务必与教程「神经网络 Embedding」区分）：**
+
+1. `tokenize_for_rag`：分词 + 中文 2/3-gram
+2. `hash_token`：MD5 映射到 `dim=8192` 的桶
+3. 桶内计数 → `1 + log(count)` → L2 归一化
+4. 检索时问题同样向量化，用 **点积 = 余弦相似度**（已归一化）
+
+好处：零外部模型依赖、中文专有名词（套餐名、接口路径）友好；代价：语义泛化弱于 `bge-m3` / OpenAI embedding，因此必须靠 **混合检索 + 领域打分** 补齐。
+
+入口：
+
+```bash
+python "D:\reolink_knowledge\build_rag_index.py" --rebuild
+```
+
+内部：`build_or_load_index(cases, rebuild=...)` —— 无 `--rebuild` 且磁盘索引存在则直接 `load()`。
+
+### 13.6 Query：一次 askreolink 问答流水线
+
+```
+用户问题
+  ↓
+search_cases_with_mode()
+  ├─ --no-rag → 仅 score_case 关键词检索
+  └─ 默认 RAG → hybrid_search_cases()
+        ├─ keyword：search_cases（粗召回 top_n*4）
+        ├─ vector：index.search（粗召回 top_n*3，可按 --module 过滤）
+        ├─ 按 case_id 聚合最高向量分（aggregate_vector_hits）
+        └─ merge_hybrid_results → 取 Top-N
+  ↓
+build_direct_answer()          # 领域意图：套餐类型 / 切换 / 对比 / 生效 / 限制
+  ↓
+format_rag_generation()        # 除非 --retrieve-only / --full
+  ├─ LLM 可用且未 --no-llm → generate_rag_answer()
+  └─ 否则 / LLM 失败 → synthesize_extractive_answer()
+  ↓
+终端输出：RAG 回答 + 简要依据（默认）或完整步骤（--full）
+```
+
+**混合分公式（实现细节）：**
+
+```
+keyword_norm = keyword_score / max(keyword_scores)
+vector_norm  = vector_score  / max(vector_scores)
+hybrid_score = 0.55 * keyword_norm + 0.45 * vector_norm
+```
+
+排序键：`hybrid_score` ↓ → `keyword_score` ↓ → `vector_score` ↓ → 模块路径 → case_id。
+
+**关键词侧为什么强：** `score_case` 对标题、模块、步骤、预期加权，并对「A 套餐切换到 B 套餐」做实体解析与大幅加分——这是纯向量很难单独做好的部分。
+
+### 13.7 生成层：三种模式与 Prompt 约束
+
+| 模式 | 触发条件 | 实现 |
+|------|----------|------|
+| Cursor Cloud Agent | `REOLINK_RAG_LLM_PROVIDER=cursor` + 有效 `CURSOR_API_KEY` | `cursor_rag_client.py` 创建无仓库 Agent，轮询至完成 |
+| OpenAI 兼容 API | `provider=openai` + API Key | `rag_llm.generate_rag_answer_openai`，`temperature=0.2` |
+| 抽取式降级 | 未配置 LLM / `--no-llm` / API 失败 | 优先用意图结论行，否则抽「步骤/预期/标题」拼结论 |
+
+系统约束（与教程「仅依据片段、依据不足、要引用」一致），见 `DEFAULT_SYSTEM_PROMPT`：
+
+- 仅依据提供的禅道用例片段
+- 依据不足时明确说「依据不足」
+- 中文、先结论、再列 case_id
+- 不编造未出现在依据中的业务规则
+
+配置示例见 `llm.env.example`：默认 Cursor（`model=auto`）；改 OpenAI 时切 `provider` 与 Key。
+
+### 13.8 常用 CLI（对照学习）
+
+```bash
+# 默认：混合检索 +（有 Key 则）LLM / 否则抽取式
+askreolink "切换套餐什么时候生效"
+
+# 只看检索质量（调优第一步，对应第十四章诊断）
+askreolink "切换套餐" --retrieve-only
+askreolink "切换套餐" --no-llm
+
+# 关 RAG，回到纯关键词
+askreolink "切换套餐" --no-rag
+
+# 模块过滤 / 直查 / 展示控制
+askreolink "删除成员" --module "机型组"
+askreolink --case 4725 --full
+askreolink "流量套餐能切换到合并套餐吗" --brief
+askreolink --top 8 "云套餐续费"
+
+# 统计 / 交互 / 重建
+askreolink --stats
+askreolink --interactive
+askreolink --rebuild-index
+```
+
+| 参数 | 作用 |
+|------|------|
+| `--top N` | 返回前 N 条（默认 5） |
+| `--module` | 模块路径子串过滤 |
+| `--no-rag` | 关闭向量，仅关键词 |
+| `--retrieve-only` | 只检索不生成 RAG 回答 |
+| `--no-llm` | 强制抽取式 |
+| `--brief` / `--full` | 极简结论 / 展开完整步骤 |
+| `--rebuild-index` | 强制重建 `data/rag/` |
+| `--case` / `--stats` / `--interactive` | 直查、统计、交互 REPL |
+
+### 13.9 与教程 Demo 的差异一览
+
+| 维度 | 第七章 Demo | askreolink 现状 |
+|------|-------------|-----------------|
+| Embedding | MiniLM / OpenAI | 本地 hash 稀疏向量，无 GPU/无 API |
+| 检索 | 纯向量 Top-K | **关键词 + 向量混合**，并按 case 聚合 |
+| Chunk | 固定长度滑动窗 | **按测试步骤结构**切 |
+| 答案 | 直接塞 Prompt 给 LLM | 意图规则答案 + RAG 生成 + 抽取式三级兜底 |
+| 引用 | chunk_id | **case_id + 禅道 link** |
+| 运维 | 手动跑 ingest | `--rebuild-index`、进程内索引缓存、三源合并 |
+| 调用方式 | `python ask.py` | `askreolink` / Cursor 规则钩子 |
+
+### 13.10 建议阅读与练习顺序
+
+1. 读 `rag_core.py`：`case_to_chunks` → `text_to_vector` → `hybrid_search_cases`
+2. `python build_rag_index.py --rebuild`，看 `data/rag/manifest.json`
+3. `askreolink "你的问题" --retrieve-only`，只评检索是否命中正确 case
+4. 再去掉 `--retrieve-only`，对比有无 LLM、`--no-llm` 的答案差异
+5. 读 `ask_reolink_testcase_kb.py` 里 `score_case`、`build_switch_answer` 等，理解「领域规则如何补纯 RAG」
+6. 需要生成质量时再配 `llm.env`，对照 `rag_llm.py` / `cursor_rag_client.py`
+
+调优时请直接跳到 [十四、RAG 怎么调优](#十四rag-怎么调优)，尤其是 **14.8 Reolink KB 调优对照**。
 
 ---
+
 
 ## 十四、RAG 怎么调优
 
