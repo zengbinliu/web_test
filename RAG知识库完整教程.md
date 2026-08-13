@@ -2,7 +2,7 @@
 
 > 面向测试开发工程师，从零开始学习 RAG 知识库的原理、脚本开发与核心概念。
 >
-> 整理日期：2026-08-05（十三章对照按 2026-08 askreolink 实现补充）
+> 整理日期：2026-08-05（十三章对照按 2026-08 askreolink 实现补充；2026-08-13 补全 ID 段 / MCP / 入库脚本）
 
 ---
 
@@ -689,17 +689,40 @@ top_p=0.95
 > 对照对象：`D:\reolink_knowledge` 当前 askreolink 实现（截至 2026-08）。  
 > 本章把前面教程里的通用概念，一一映射到真实代码与数据文件，方便「读教程 → 对照源码 → 动手跑」。
 
+一句话：**本地离线 RAG（关键词 + hashing 向量）+ 可选 Cursor/OpenAI 生成**；语料 = 禅道用例 + 站点/JMX 补充 + MCP 补丁。不依赖外部 embedding 服务。
+
+```
+禅道导出 ──┐
+站点爬取 ──┼─→ load_cases() 统一 case 列表 ──┬─→ 关键词打分 (0.55)
+JMX 导入 ──┤                                └─→ hash 向量索引 (0.45)
+MCP 补丁 ──┘                                         │
+                                                     ▼
+                                              混合检索 Top-N
+                                                     │
+                          ┌──────────────────────────┼──────────────────────────┐
+                          ▼                          ▼                          ▼
+                   意图直答规则              Cursor / OpenAI              抽取式降级
+              (套餐切换/生效等)            (llm.env 已配置)            (无 Key / 失败)
+```
+
 ### 13.1 这套 KB 解决什么问题
 
 面向 **Reolink 禅道测试用例** 的本地问答 / 检索：
 
-- 产品 ID `42`，根模块「全量用例」导出后的结构化用例
-- 补充知识：JMX 接口自动化场景、站点爬取等（`supplemental`）
+- 产品 ID `42`，根模块 ID `20331`（路径「全量用例」），导出约 **2498** 条用例 / **231** 个模块（以 `data/manifest.json` 为准）
+- 补充知识：JMX 接口自动化场景、Cloud 测试服站点爬取等（`supplemental`）
 - MCP / 人工写入的逻辑补丁（`kb_logic_patches.jsonl` → `source_type=patch`）
 
 默认走 **RAG 混合检索**（关键词打分 + 稀疏向量），再按是否配置 LLM 选择 **Cursor Cloud Agent / OpenAI 兼容 API / 抽取式回答**。
 
-Cursor 规则：提示词以 `askreolink` 开头时，直接调用：
+**调用通道（技能约定：MCP 优先 → Shell fallback）：**
+
+| 通道 | 用法 | 说明 |
+|------|------|------|
+| MCP | Cursor 里 `user-flask-mcp-local` → `askreolink(query=..., top=..., full=...)` | Agent / 技能首选；MCP 不可用时再 fallback |
+| Shell | `python "D:\reolink_knowledge\ask_reolink_testcase_kb.py" "..."` | 完整参数（`--retrieve-only` / `--rebuild-index` 等） |
+| 启动器 | `askreolink "..."`（`askreolink.cmd` 已进 PATH） | 与 Shell 同脚本 |
+| 规则钩子 | 用户消息以 `askreolink` 开头 | 先 MCP，失败再 Shell |
 
 ```bash
 python "D:\reolink_knowledge\ask_reolink_testcase_kb.py" "你的问题"
@@ -718,15 +741,21 @@ D:\reolink_knowledge\
 ├── rag_core.py                  # 切分、稀疏向量、RAGIndex、hybrid_search
 ├── rag_llm.py                   # LLM 配置、Prompt、生成与抽取式降级
 ├── cursor_rag_client.py         # Cursor Cloud Agents API（创建无仓库 Agent 生成答案）
-├── export_zentao_module_kb.py   # 从禅道导出语料（Indexing 上游）
-├── import_jmx_scenarios.py      # JMX → supplemental 知识
+├── export_zentao_module_kb.py   # 从禅道导出语料（Indexing 上游；凭据读 ~/.cursor/mcp.json）
+├── crawl_cloud_review_site.py   # Cloud 测试服爬取 → supplemental（991xxx）
+├── import_jmx_scenarios.py      # JMX → supplemental 知识（992xxx）
 ├── llm.env / llm.env.example    # LLM 密钥与 provider
 ├── kb_logic_patches.jsonl       # 可选：逻辑补丁（环境变量 REOLINK_KB_PATCHES_PATH 可改路径）
-├── corpus/module-*.md           # 按模块的人类可读 Markdown（导出产物，非检索主索引）
+├── corpus/
+│   ├── module-*.md              # 按模块的人类可读 Markdown（导出产物，非检索主索引）
+│   ├── api-automation-index.md  # 接口自动化场景人类可读索引
+│   └── site-cloud-review-map.md # 测试服站点地图摘要
 └── data/
     ├── testcases.jsonl          # 主知识：禅道用例
-    ├── supplemental_cases.json  # 补充知识
+    ├── supplemental_cases.json  # 补充知识（站点 + JMX 等）
+    ├── jmx_import_report.json   # JMX 导入统计报告
     ├── manifest.json            # 导出元信息（用例规模等）
+    ├── site_crawl/<批次>/       # 爬取原始产物（pages / api_catalog / 截图）
     └── rag/                     # RAG 索引产物
         ├── chunks.jsonl
         ├── vectors.npy
@@ -757,6 +786,8 @@ D:\reolink_knowledge\
 | Generation | Cursor Agent 或 OpenAI；失败则抽取式 | `generate_rag_answer()` / `synthesize_extractive_answer()` |
 | 领域后处理 | 套餐类型 / 切换 / 对比 / 生效 / 限制等意图答案 | `build_direct_answer()` 一族 |
 | 索引缓存 | 进程内模块级缓存，避免每次 query 重建 | `RAG_INDEX` + `get_rag_index()` |
+| case_id 段位 | 真实禅道 ID / `991` 站点 / `992` JMX / `993` 补丁 | `load_cases()`、`import_jmx_scenarios.py`、`patch_record_to_case()` |
+| 对外入口 | MCP 工具 / Shell CLI / PATH 启动器 | `user-flask-mcp-local.askreolink`、`ask_reolink_testcase_kb.py` |
 
 当前索引规模示例（以本机 `data/rag/manifest.json` 为准）：
 
@@ -771,17 +802,24 @@ D:\reolink_knowledge\
 
 ### 13.4 数据源：三路合并进同一个 case 列表
 
-`load_cases()` 顺序加载并统一 `prepare_case()`（预计算 `_search` 规范化字段，供关键词打分）：
+`load_cases()` 按 **testcase → supplemental → patch** 顺序加载，并统一 `prepare_case()`（预计算 `_search` 规范化字段，供关键词打分）。命中展示时用不同标签：`命中用例` / `命中知识` / `命中补丁`。
 
-| 来源 | 路径 | `source_type` | 用途 |
-|------|------|---------------|------|
-| 禅道用例 | `data/testcases.jsonl` | `testcase` | 主库 |
-| 补充知识 | `data/supplemental_cases.json` | `supplemental` | JMX 场景、爬取等 |
-| 逻辑补丁 | `kb_logic_patches.jsonl`（可配置） | `patch` | MCP/人工更正，合成伪 case_id |
+| 来源 | 路径 | `source_type` | case_id 约定 | 用途 |
+|------|------|---------------|--------------|------|
+| 禅道用例 | `data/testcases.jsonl` | `testcase` | 真实禅道 ID | 主库 |
+| 站点知识 | `data/supplemental_cases.json` | `supplemental` | **`991xxxxxx`** | Cloud 测试服路由 / 页面 / API 分组 |
+| 接口自动化 | 同上（JMX 导入写入） | `supplemental` | **`992xxxxxx`** | 组合场景 `992000001+`、单接口 `992100001+`、禅道串联索引 `992200001+` |
+| 逻辑补丁 | `kb_logic_patches.jsonl`（可配置） | `patch` | **`993000000+` 序号** | MCP/人工更正，合成伪 case |
+
+**注意：** `--case <禅道ID>` 只查主库用例；查 JMX 接口序列要用关键词检索，例如 `"186294 接口自动化 jmx"`，不能指望 `--case` 命中 `992xxx`。
 
 导出与补充入库后，需要重建向量索引：
 
 ```bash
+# 站点爬取（按需）
+python "D:\reolink_knowledge\crawl_cloud_review_site.py"
+
+# JMX → supplemental（默认读 C:\Users\Reolink\Downloads\接口自动化场景）
 python "D:\reolink_knowledge\import_jmx_scenarios.py" --merge
 python "D:\reolink_knowledge\build_rag_index.py" --rebuild
 # 或
@@ -879,7 +917,7 @@ hybrid_score = 0.55 * keyword_norm + 0.45 * vector_norm
 - 中文、先结论、再列 case_id
 - 不编造未出现在依据中的业务规则
 
-配置示例见 `llm.env.example`：默认 Cursor（`model=auto`）；改 OpenAI 时切 `provider` 与 Key。
+配置示例见 `llm.env.example`：默认 Cursor（`model=auto` 走 First-party 池）；显式 `composer-2.5` 等 frontier 模型走 API 池，需 Dashboard Spend Limit。改 OpenAI 时切 `provider` 与 Key。Cursor 模式每次问答会创建无仓库 Cloud Agent，通常需 10–60 秒。
 
 ### 13.8 常用 CLI（对照学习）
 
@@ -900,6 +938,12 @@ askreolink --case 4725 --full
 askreolink "流量套餐能切换到合并套餐吗" --brief
 askreolink --top 8 "云套餐续费"
 
+# 自动化编写常用：禅道用例 + JMX 场景（两轮）+ API 分组
+askreolink --case 186294 --full
+askreolink "186294 接口自动化 jmx" --retrieve-only --top 8
+askreolink "API 分组 /v2/shop" --retrieve-only --top 3
+askreolink "/v2/shop/orders 在哪些自动化场景" --retrieve-only --top 5
+
 # 统计 / 交互 / 重建
 askreolink --stats
 askreolink --interactive
@@ -917,6 +961,8 @@ askreolink --rebuild-index
 | `--rebuild-index` | 强制重建 `data/rag/` |
 | `--case` / `--stats` / `--interactive` | 直查、统计、交互 REPL |
 
+**MCP 参数对照（与 Shell 大致等价）：** `askreolink(query="...", top=8, full=true, module="cloud")`；缺 Shell 专有参数（如 `--rebuild-index`）时仍用命令行。
+
 ### 13.9 与教程 Demo 的差异一览
 
 | 维度 | 第七章 Demo | askreolink 现状 |
@@ -925,18 +971,20 @@ askreolink --rebuild-index
 | 检索 | 纯向量 Top-K | **关键词 + 向量混合**，并按 case 聚合 |
 | Chunk | 固定长度滑动窗 | **按测试步骤结构**切 |
 | 答案 | 直接塞 Prompt 给 LLM | 意图规则答案 + RAG 生成 + 抽取式三级兜底 |
-| 引用 | chunk_id | **case_id + 禅道 link** |
-| 运维 | 手动跑 ingest | `--rebuild-index`、进程内索引缓存、三源合并 |
-| 调用方式 | `python ask.py` | `askreolink` / Cursor 规则钩子 |
+| 引用 | chunk_id | **case_id + 禅道 link**（补丁/补充知识则用本地标签） |
+| 语料 | 单一文档目录 | **三源合并** + case_id 段位约定（真实 ID / 991 / 992 / 993） |
+| 运维 | 手动跑 ingest | 禅道导出 + 站点爬取 + JMX `--merge` + `--rebuild-index`、进程内索引缓存 |
+| 调用方式 | `python ask.py` | MCP `askreolink` / Shell / `askreolink.cmd` / Cursor 规则钩子 |
 
 ### 13.10 建议阅读与练习顺序
 
 1. 读 `rag_core.py`：`case_to_chunks` → `text_to_vector` → `hybrid_search_cases`
-2. `python build_rag_index.py --rebuild`，看 `data/rag/manifest.json`
+2. `python build_rag_index.py --rebuild`，看 `data/rag/manifest.json`（对照 `case_total` 是否含 supplemental）
 3. `askreolink "你的问题" --retrieve-only`，只评检索是否命中正确 case
 4. 再去掉 `--retrieve-only`，对比有无 LLM、`--no-llm` 的答案差异
-5. 读 `ask_reolink_testcase_kb.py` 里 `score_case`、`build_switch_answer` 等，理解「领域规则如何补纯 RAG」
-6. 需要生成质量时再配 `llm.env`，对照 `rag_llm.py` / `cursor_rag_client.py`
+5. 读 `ask_reolink_testcase_kb.py` 里 `load_cases`、`score_case`、`build_switch_answer` 等，理解「三源合并 + 领域规则如何补纯 RAG」
+6. 练一轮自动化向查询：`--case <ID> --full` 与 `"<ID> 接口自动化 jmx"`，体会主库与 `992xxx` 的分工
+7. 需要生成质量时再配 `llm.env`，对照 `rag_llm.py` / `cursor_rag_client.py`
 
 调优时请直接跳到 [十四、RAG 怎么调优](#十四rag-怎么调优)，尤其是 **14.8 Reolink KB 调优对照**。
 
