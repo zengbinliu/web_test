@@ -1,0 +1,5 @@
+﻿
+# RAG large artifacts
+rags/ask_rag/data/rag/vectors.npy
+*.npy
+**/__pycache__/

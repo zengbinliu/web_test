@@ -1,0 +1,574 @@
+{
+  "meta": {
+    "project": "Cloud",
+    "version_tag": "【Renew/Auto-Renew/Switch/Cancel版本】",
+    "source_prd": "c:\\Users\\Reolink\\Desktop\\Web Renew、Auto-Renew、Switch、Cancel按钮逻辑.docx",
+    "sheet_name": "测试用例"
+  },
+  "cases": [
+    {
+      "id": "TC-001",
+      "module": "前台-Dashboard页面-云套餐-Auto-renew",
+      "title": "验证付费云套餐满足全部条件时 Current Subscription 卡片展示 Auto-renewal 开关",
+      "precondition": "1）测试账号已登录 Cloud Dashboard\n2）Current Subscription 中存在生效中（active）的付费云套餐\n3）套餐 planStatus 为 enabled 或 renew_only，且 renewable=true\n4）套餐非 freePlanTrack，userMaxSubscribeTimes≠1，未达续费周期上限\n5）订阅有 billingCountry，且该国家在 PayPal 或 Adyen 免密支付支持列表中\n6）config.showCloudPlanAutoRenew=true，subscribe.hideAutoRenewSwitch=false",
+      "priority": "P1",
+      "steps": [
+        "登录后进入 Cloud Dashboard（/user/dashboard/）",
+        "确认位于 Reolink Cloud Service Tab 的 Current Subscription 列表",
+        "找到目标付费云套餐订阅卡片",
+        "查看卡片 Auto-renewal 区域"
+      ],
+      "expects": [
+        "Dashboard 正常加载，My Dashboard 可见",
+        "Current Subscription 列表展示目标云套餐卡片",
+        "卡片展示套餐名称、Valid Until 等基础信息",
+        "Auto-renewal 开关可见；开关旁 info 图标可见（点击可跳转 Reolink Subscription Terms）"
+      ],
+      "type": "功能测试",
+      "requirement_ref": "§2.1 云套餐 Auto-renewal 显示逻辑"
+    },
+    {
+      "id": "TC-002",
+      "module": "前台-Dashboard页面-云套餐-Auto-renew",
+      "title": "验证免费云套餐订阅卡片不展示 Auto-renewal 开关",
+      "precondition": "1）测试账号已登录\n2）Current Subscription 中存在生效中的免费云套餐（isFreeSub=true，价格为 0）",
+      "priority": "P1",
+      "steps": [
+        "进入 Cloud Dashboard Reolink Cloud Service Tab",
+        "在 Current Subscription 找到免费云套餐卡片",
+        "查看 Auto-renewal 区域"
+      ],
+      "expects": [
+        "Dashboard 正常加载",
+        "免费云套餐卡片正常展示",
+        "卡片不展示 Auto-renewal 开关及相关 info 入口"
+      ],
+      "type": "功能测试",
+      "requirement_ref": "§2.1 云套餐 Auto-renewal — !isFreeSub"
+    },
+    {
+      "id": "TC-003",
+      "module": "前台-Dashboard页面-云套餐-Auto-renew",
+      "title": "验证订阅状态非 active 时云套餐卡片不展示 Auto-renewal 开关",
+      "precondition": "1）测试账号已登录\n2）存在 subscribe.status 为 canceled 或 expired 的云套餐（可在 Expired Subscription 或 inactive 态卡片）",
+      "priority": "P2",
+      "steps": [
+        "进入 Cloud Dashboard Reolink Cloud Service Tab",
+        "切换至 Expired Subscription 或查看 inactive 态云套餐卡片",
+        "查看 Auto-renewal 区域"
+      ],
+      "expects": [
+        "Dashboard 正常加载",
+        "目标非 active 云套餐卡片可见",
+        "卡片不展示 Auto-renewal 开关"
+      ],
+      "type": "功能测试",
+      "requirement_ref": "§2.1 云套餐 Auto-renewal — subscribe.status=active"
+    },
+    {
+      "id": "TC-004",
+      "module": "前台-Dashboard页面-云套餐-Auto-renew",
+      "title": "验证 planStatus=disabled 的云套餐不展示 Auto-renewal 开关",
+      "precondition": "1）测试账号已登录\n2）账号下存在 planStatus=disabled 的云套餐订阅（renewable=false）",
+      "priority": "P2",
+      "steps": [
+        "进入 Cloud Dashboard Reolink Cloud Service Tab",
+        "找到 planStatus=disabled 的云套餐卡片",
+        "查看 Auto-renewal 区域"
+      ],
+      "expects": [
+        "Dashboard 正常加载",
+        "disabled 套餐卡片按后端规则展示（通常无 Renew）",
+        "卡片不展示 Auto-renewal 开关"
+      ],
+      "type": "功能测试",
+      "requirement_ref": "§2.1 云套餐 Auto-renewal — renewable 条件"
+    },
+    {
+      "id": "TC-005",
+      "module": "前台-Dashboard页面-云套餐-Auto-renew",
+      "title": "验证新用户 freePlanTrack 云套餐不展示 Auto-renewal 开关",
+      "precondition": "1）测试账号为新用户且已订阅 Basic Plan 免费轨道套餐（freePlanTrack=true）\n2）订阅为 active 态",
+      "priority": "P2",
+      "steps": [
+        "进入 Cloud Dashboard Reolink Cloud Service Tab",
+        "找到 freePlanTrack 免费云套餐卡片",
+        "查看 Auto-renewal 区域"
+      ],
+      "expects": [
+        "Dashboard 正常加载",
+        "Basic Plan 免费轨道套餐卡片可见",
+        "卡片不展示 Auto-renewal 开关"
+      ],
+      "type": "功能测试",
+      "requirement_ref": "§2.1 云套餐 Auto-renewal — freePlanTrack"
+    },
+    {
+      "id": "TC-006",
+      "module": "前台-Dashboard页面-云套餐-Auto-renew",
+      "title": "验证 userMaxSubscribeTimes=1 的云套餐不展示 Auto-renewal 开关",
+      "precondition": "1）测试账号已登录\n2）账号下存在 plan.limitations.userMaxSubscribeTimes=1 且已订阅一次的云套餐",
+      "priority": "P2",
+      "steps": [
+        "进入 Cloud Dashboard Reolink Cloud Service Tab",
+        "找到 userMaxSubscribeTimes=1 限制的云套餐卡片",
+        "查看 Auto-renewal 区域"
+      ],
+      "expects": [
+        "Dashboard 正常加载",
+        "受限云套餐卡片可见",
+        "卡片不展示 Auto-renewal 开关"
+      ],
+      "type": "功能测试",
+      "requirement_ref": "§2.1 云套餐 Auto-renewal — userMaxSubscribeTimes"
+    },
+    {
+      "id": "TC-007",
+      "module": "前台-Dashboard页面-云套餐-Auto-renew",
+      "title": "验证订阅无 billingCountry 时不展示 Auto-renewal 开关",
+      "precondition": "1）测试账号已登录\n2）存在生效中付费云套餐，但订阅记录无 billingCountry（如下单免费套餐或未记录国家场景构造）\n3）subscribe.hideAutoRenewSwitch 由后端 checkIsHideAutoRenewSwitchByList 判定为隐藏",
+      "priority": "P2",
+      "steps": [
+        "进入 Cloud Dashboard Reolink Cloud Service Tab",
+        "找到无 billingCountry 的目标云套餐卡片",
+        "查看 Auto-renewal 区域"
+      ],
+      "expects": [
+        "Dashboard 正常加载",
+        "目标云套餐卡片可见",
+        "卡片不展示 Auto-renewal 开关（后端 hideAutoRenewSwitch 生效）"
+      ],
+      "type": "功能测试",
+      "requirement_ref": "§2.1 云套餐 Auto-renewal — billingCountry 隐藏规则①"
+    },
+    {
+      "id": "TC-008",
+      "module": "前台-Dashboard页面-云套餐-Auto-renew",
+      "title": "验证 billingCountry 不在 PayPal/Adyen 免密支持列表时不展示 Auto-renewal 开关",
+      "precondition": "1）测试账号已登录\n2）存在 active 付费云套餐，billingCountry 为 PayPal 与 Adyen 均不支持免密支付的国家",
+      "priority": "P2",
+      "steps": [
+        "进入 Cloud Dashboard Reolink Cloud Service Tab",
+        "找到 billingCountry 不支持免密支付的目标云套餐卡片",
+        "查看 Auto-renewal 区域"
+      ],
+      "expects": [
+        "Dashboard 正常加载",
+        "目标云套餐卡片可见",
+        "卡片不展示 Auto-renewal 开关"
+      ],
+      "type": "功能测试",
+      "requirement_ref": "§2.1 云套餐 Auto-renewal — isUnionCountryRenewable 隐藏规则②"
+    },
+    {
+      "id": "TC-009",
+      "module": "前台-Dashboard页面-云套餐-Auto-renew",
+      "title": "验证 billingCountry 仅 Adyen 支持且用户不在白名单时不展示 Auto-renewal 开关",
+      "precondition": "1）测试账号已登录且不在 Adyen 自动续费白名单\n2）存在 active 付费云套餐，billingCountry 为仅 Adyen 支持免密、PayPal 不支持的国家",
+      "priority": "P3",
+      "steps": [
+        "进入 Cloud Dashboard Reolink Cloud Service Tab",
+        "找到符合 Adyen-only 国家条件的云套餐卡片",
+        "查看 Auto-renewal 区域"
+      ],
+      "expects": [
+        "Dashboard 正常加载",
+        "目标云套餐卡片可见",
+        "卡片不展示 Auto-renewal 开关（isUserInAdyenAutoRenewWhiteList=false）"
+      ],
+      "type": "功能测试",
+      "requirement_ref": "§2.1 云套餐 Auto-renewal — Adyen 白名单隐藏规则③"
+    },
+    {
+      "id": "TC-010",
+      "module": "前台-Dashboard页面-云套餐-Auto-renew",
+      "title": "验证已开启自动续费的云套餐仍展示 Auto-renewal 开关且为开启态",
+      "precondition": "1）测试账号已登录\n2）存在 active 付费云套餐且 autoRenew=true\n3）满足 Auto-renewal 显示的其他条件",
+      "priority": "P1",
+      "steps": [
+        "进入 Cloud Dashboard Reolink Cloud Service Tab",
+        "找到已开启自动续费的目标云套餐卡片",
+        "查看 Auto-renewal 开关状态"
+      ],
+      "expects": [
+        "Dashboard 正常加载",
+        "目标云套餐卡片可见",
+        "Auto-renewal 开关可见且为开启态；若开启自动续费，卡片可展示 next bill 相关信息"
+      ],
+      "type": "功能测试",
+      "requirement_ref": "§2.1 云套餐 Auto-renewal — 已开启仍显示"
+    },
+    {
+      "id": "TC-011",
+      "module": "前台-Dashboard页面-云套餐-Auto-renew",
+      "title": "验证关闭云套餐 Auto-renewal 开关需二次确认且关闭后不再自动扣费",
+      "precondition": "1）测试账号已登录\n2）存在 active 付费云套餐且 autoRenew=true，Auto-renewal 开关可见",
+      "priority": "P1",
+      "steps": [
+        "进入 Cloud Dashboard，打开目标云套餐 Auto-renewal 开关所在卡片",
+        "点击 Auto-renewal 开关将其关闭",
+        "在二次确认弹框中点击确认关闭",
+        "刷新页面或通过接口/后台核对订阅 autoRenew 状态"
+      ],
+      "expects": [
+        "Auto-renewal 开关可见且当前为开启态",
+        "弹出二次确认弹框，文案明确提示关闭后不再自动扣费",
+        "确认后开关变为关闭态，弹框消失",
+        "订阅 autoRenew=false；后续到期不会自动扣费续费"
+      ],
+      "type": "功能测试",
+      "requirement_ref": "§2.1 云套餐 Auto-renewal 操作；RAG 262413/350429",
+      "remark": "可参考禅道 262413、350429"
+    },
+    {
+      "id": "TC-012",
+      "module": "前台-Dashboard页面-云套餐-Auto-renew",
+      "title": "验证已签约 PayPal/Adyen 的云套餐开启 Auto-renewal 直接成功",
+      "precondition": "1）测试账号已登录且在 Payment Methods 中已完成 PayPal 或 Adyen 免密签约\n2）存在 active 付费云套餐且 autoRenew=false，Auto-renewal 开关可见",
+      "priority": "P1",
+      "steps": [
+        "进入 Cloud Dashboard 目标云套餐卡片",
+        "点击 Auto-renewal 开关将其开启",
+        "观察是否出现签约引导页",
+        "刷新页面或通过接口核对 autoRenew 状态"
+      ],
+      "expects": [
+        "Auto-renewal 开关可见且当前为关闭态",
+        "开关直接变为开启态，不弹出 PayPal/Adyen 新签约流程",
+        "无多余签约引导页阻断",
+        "订阅 autoRenew=true"
+      ],
+      "type": "功能测试",
+      "requirement_ref": "§2.1 云套餐 Auto-renewal 操作；RAG 262413",
+      "remark": "已签约场景"
+    },
+    {
+      "id": "TC-013",
+      "module": "前台-Dashboard页面-云套餐-Auto-renew",
+      "title": "验证未签约账号开启云套餐 Auto-renewal 需引导 PayPal 或 Adyen 签约",
+      "precondition": "1）测试账号已登录且未签约 PayPal/Adyen 免密支付\n2）billingCountry 支持对应支付方式\n3）存在 active 付费云套餐且 autoRenew=false，Auto-renewal 开关可见",
+      "priority": "P1",
+      "steps": [
+        "进入 Cloud Dashboard 目标云套餐卡片",
+        "点击 Auto-renewal 开关将其开启",
+        "在续费方式选择页选择 PayPal 或 Adyen 并完成签约",
+        "返回 Dashboard 查看开关状态"
+      ],
+      "expects": [
+        "Auto-renewal 开关可见且当前为关闭态",
+        "弹出续费方式选择或签约引导（PayPal / Adyen）",
+        "完成签约后 Auto-renewal 开关变为开启态",
+        "订阅 autoRenew=true；所选支付方式成为第一顺位扣款方式"
+      ],
+      "type": "功能测试",
+      "requirement_ref": "§2.1 云套餐 Auto-renewal 操作；RAG 262413",
+      "remark": "未签约场景"
+    },
+    {
+      "id": "TC-014",
+      "module": "前台-Dashboard页面-云套餐-Auto-renew",
+      "title": "验证点击云套餐 Auto-renewal info 跳转订阅协议页",
+      "precondition": "1）测试账号已登录\n2）存在展示 Auto-renewal 开关的云套餐卡片",
+      "priority": "P3",
+      "steps": [
+        "进入 Cloud Dashboard 目标云套餐卡片",
+        "点击 Auto-renewal 旁 info 图标",
+        "查看跳转页面"
+      ],
+      "expects": [
+        "Auto-renewal 区域可见",
+        "info 图标可点击",
+        "跳转至 Reolink Subscription Terms（/terms-of-use 或等效协议页）"
+      ],
+      "type": "UI测试",
+      "requirement_ref": "§2.1 云套餐 Auto-renewal；RAG 350429",
+      "remark": "RAG 350429：Auto-renewal info 跳转协议"
+    },
+    {
+      "id": "TC-015",
+      "module": "前台-Dashboard页面-流量套餐-Auto-renew",
+      "title": "验证付费生效中流量套餐 SIM 详情满足条件时展示 Auto-renewal 开关",
+      "precondition": "1）测试账号已登录\n2）已购买生效中付费流量套餐且 SIM 卡已绑定未解绑\n3）plan.status≠disabled，非免费套餐，subscribe.status=active\n4）config.showAutoRenew=true，hideAutoRenewSwitch=false，billingCountry 支持免密支付",
+      "priority": "P1",
+      "steps": [
+        "进入 Cloud Dashboard，切换至 Reolink Cellular Data Service Tab",
+        "点击目标 SIM Card 进入详情页",
+        "在 Subscription 区域点击 Show More 展开",
+        "查看 Auto-renewal 区域"
+      ],
+      "expects": [
+        "Cellular Data Service Tab 列表正常加载（Select All 或 ICCID 等 marker 可见）",
+        "SIM Card 详情页 Subscription 区域可见",
+        "Show More 展开成功",
+        "Auto-renewal 开关可见；生效中流量套餐才有自动续费信息"
+      ],
+      "type": "功能测试",
+      "requirement_ref": "§2.2 流量套餐 Auto-renew 显示逻辑；RAG 186239",
+      "remark": "禅道 186239 同场景"
+    },
+    {
+      "id": "TC-016",
+      "module": "前台-Dashboard页面-流量套餐-Auto-renew",
+      "title": "验证免费流量套餐不展示 Auto-renewal 开关",
+      "precondition": "1）测试账号已登录\n2）存在生效中的免费流量/合并流量套餐（价格为 0）",
+      "priority": "P1",
+      "steps": [
+        "进入 Cloud Dashboard Cellular Data Service Tab",
+        "进入免费流量套餐对应 SIM Card 详情",
+        "展开 Subscription Show More",
+        "查看 Auto-renewal 区域"
+      ],
+      "expects": [
+        "Cellular Tab 正常加载",
+        "SIM 详情 Subscription 区域可见",
+        "Show More 展开成功",
+        "不展示 Auto-renewal 开关"
+      ],
+      "type": "功能测试",
+      "requirement_ref": "§2.2 流量套餐 Auto-renew — 免费套餐隐藏"
+    },
+    {
+      "id": "TC-017",
+      "module": "前台-Dashboard页面-流量套餐-Auto-renew",
+      "title": "验证 inactive 态流量套餐不展示 Auto-renewal 开关",
+      "precondition": "1）测试账号已登录\n2）存在 subscribe.status=inactive 的流量套餐（已取消或已过期）",
+      "priority": "P2",
+      "steps": [
+        "进入 Cloud Dashboard Cellular Data Service Tab",
+        "找到 inactive 态流量套餐对应 SIM Card",
+        "进入详情并展开 Subscription",
+        "查看 Auto-renewal 区域"
+      ],
+      "expects": [
+        "Cellular Tab 正常加载",
+        "inactive 套餐 SIM 详情可访问",
+        "Subscription 展示 expired/inactive 等状态",
+        "不展示 Auto-renewal 开关"
+      ],
+      "type": "功能测试",
+      "requirement_ref": "§2.2 流量套餐 Auto-renew — inactive 隐藏"
+    },
+    {
+      "id": "TC-018",
+      "module": "前台-Dashboard页面-流量套餐-Auto-renew",
+      "title": "验证 SIM 卡已解绑的流量套餐不展示 Auto-renewal 开关",
+      "precondition": "1）测试账号已登录\n2）存在曾购买流量套餐但 SIM 卡已与账号解绑（unbinded）的记录",
+      "priority": "P2",
+      "steps": [
+        "进入 Cloud Dashboard Cellular Data Service Tab",
+        "找到已解绑 SIM 的流量套餐记录",
+        "进入详情并展开 Subscription Show More",
+        "查看 Auto-renewal 区域"
+      ],
+      "expects": [
+        "Cellular Tab 正常加载",
+        "解绑 SIM 详情可见，状态展示 unbinded 或等效文案",
+        "Show More 可展开",
+        "不展示 Auto-renewal 开关"
+      ],
+      "type": "功能测试",
+      "requirement_ref": "§2.2 流量套餐 Auto-renew — SIM 解绑隐藏；RAG 242786"
+    },
+    {
+      "id": "TC-019",
+      "module": "前台-Dashboard页面-流量套餐-Auto-renew",
+      "title": "验证无 SIM 关联的流量套餐不展示 Auto-renewal 开关",
+      "precondition": "1）测试账号已登录\n2）存在无 SIM 卡关联的流量套餐订阅（后端无 sim 绑定关系）",
+      "priority": "P3",
+      "steps": [
+        "进入 Cloud Dashboard Cellular Data Service Tab",
+        "找到无 SIM 关联的流量套餐入口或卡片",
+        "尝试查看 Subscription 自动续费区域"
+      ],
+      "expects": [
+        "Cellular Tab 正常加载",
+        "无 SIM 关联套餐按产品设计展示（可能无详情或列表异常态）",
+        "不展示 Auto-renewal 开关"
+      ],
+      "type": "功能测试",
+      "requirement_ref": "§2.2 流量套餐 Auto-renew — 无 SIM 关联隐藏"
+    },
+    {
+      "id": "TC-020",
+      "module": "前台-Dashboard页面-流量套餐-Auto-renew",
+      "title": "验证一张 SIM 仅能订阅一次配置下不展示 Auto-renewal 开关",
+      "precondition": "1）云后台已配置「一张 SIM 卡仅能订阅一个且仅能订阅一次」（设备订阅次数限制=1）\n2）测试 SIM 已使用过该唯一订阅名额",
+      "priority": "P3",
+      "steps": [
+        "进入 Cloud Dashboard Cellular Data Service Tab",
+        "进入已触发订阅次数限制的 SIM Card 详情",
+        "展开 Subscription Show More",
+        "查看 Auto-renewal 区域"
+      ],
+      "expects": [
+        "Cellular Tab 正常加载",
+        "SIM 详情 Subscription 可见",
+        "按后端规则该 SIM 不可再续费/开自动续费",
+        "不展示 Auto-renewal 开关"
+      ],
+      "type": "功能测试",
+      "requirement_ref": "§2.2 流量套餐 Auto-renew — 设备订阅次数限制=1"
+    },
+    {
+      "id": "TC-021",
+      "module": "前台-Dashboard页面-流量套餐-Auto-renew",
+      "title": "验证流量套餐关闭 Auto-renewal 需二次确认且关闭后不再自动扣费",
+      "precondition": "1）测试账号已登录\n2）存在 active 付费流量套餐且 autoRenew=true，Auto-renewal 开关可见",
+      "priority": "P1",
+      "steps": [
+        "进入 SIM Card 详情 Subscription，展开 Show More",
+        "点击 Auto-renewal 开关关闭",
+        "在二次确认弹框点击确认",
+        "通过接口或刷新页面核对 autoRenew 状态"
+      ],
+      "expects": [
+        "Auto-renewal 开关可见且为开启态",
+        "弹出二次确认弹框",
+        "确认后开关变为关闭态",
+        "订阅 autoRenew=false，后续不再自动扣费"
+      ],
+      "type": "功能测试",
+      "requirement_ref": "§2.2 流量套餐 Auto-renew 操作；RAG 186239/262413",
+      "remark": "禅道 186239 步骤2"
+    },
+    {
+      "id": "TC-022",
+      "module": "前台-Dashboard页面-流量套餐-Auto-renew",
+      "title": "验证流量套餐开启 Auto-renewal 已签约直接开启未签约引导 PayPal 签约",
+      "precondition": "1）测试账号已登录\n2）存在 active 付费流量套餐且 autoRenew=false，Auto-renewal 开关可见\n3）分别准备已签约与未签约 PayPal 的两个测试账号或两次测试",
+      "priority": "P1",
+      "steps": [
+        "进入 SIM Card 详情，展开 Auto-renewal 区域",
+        "使用已签约账号点击开启 Auto-renewal 开关",
+        "使用未签约账号重复：点击开启并走完 PayPal 签约",
+        "分别核对接口 autoRenew 字段"
+      ],
+      "expects": [
+        "Auto-renewal 开关可见且为关闭态",
+        "已签约：开关直接变为开启态，无需新签约流程",
+        "未签约：调出 PayPal（或 Adyen）签约流程，签约完成后开关开启",
+        "两种场景最终 autoRenew=true"
+      ],
+      "type": "功能测试",
+      "requirement_ref": "§2.2 流量套餐 Auto-renew 操作；RAG 186239 步骤3",
+      "remark": "禅道 186239 步骤3"
+    },
+    {
+      "id": "TC-023",
+      "module": "前台-Dashboard页面-流量套餐-Auto-renew",
+      "title": "验证流量套餐点击 Auto-renewal details 展示自动续费说明",
+      "precondition": "1）测试账号已登录\n2）存在展示 Auto-renewal 开关的 active 流量套餐",
+      "priority": "P3",
+      "steps": [
+        "进入 SIM Card 详情 Subscription，展开 Show More",
+        "点击 Auto-renewal 旁 details 链接或按钮",
+        "查看说明内容"
+      ],
+      "expects": [
+        "Auto-renewal 区域可见",
+        "details 入口可点击",
+        "展示自动续费相关说明文案（扣费规则、周期等）"
+      ],
+      "type": "UI测试",
+      "requirement_ref": "§2.2 流量套餐 Auto-renew 操作；RAG 186239 步骤4",
+      "remark": "禅道 186239 步骤4"
+    },
+    {
+      "id": "TC-024",
+      "module": "前台-Dashboard页面-合并套餐-Auto-renew",
+      "title": "验证合并套餐满足条件时在详情页展示 Auto-renewal 开关",
+      "precondition": "1）测试账号已登录\n2）存在 active 付费合并套餐，且关联 SIM 与设备均未解绑\n3）plan.status≠disabled，非免费，hideAutoRenewSwitch=false，billingCountry 支持免密支付",
+      "priority": "P1",
+      "steps": [
+        "进入 Cloud Dashboard 或 My Devices 找到合并套餐关联设备/SIM 入口",
+        "进入合并套餐 Subscription 详情",
+        "点击 Show More 展开",
+        "查看 Auto-renewal 区域"
+      ],
+      "expects": [
+        "合并套餐详情页正常加载",
+        "Subscription 区域展示 current plan、Valid Until 等信息",
+        "Show More 展开成功",
+        "Auto-renewal 开关可见"
+      ],
+      "type": "功能测试",
+      "requirement_ref": "§2.2 合并套餐 Auto-renew 显示逻辑"
+    },
+    {
+      "id": "TC-025",
+      "module": "前台-Dashboard页面-合并套餐-Auto-renew",
+      "title": "验证合并套餐无 SIM 或无设备关联时不展示 Auto-renewal 开关",
+      "precondition": "1）测试账号已登录\n2）存在合并套餐订阅但 SIM 已解绑或设备关联缺失",
+      "priority": "P2",
+      "steps": [
+        "进入合并套餐对应设备/SIM 详情页",
+        "展开 Subscription Show More",
+        "查看 Auto-renewal 区域"
+      ],
+      "expects": [
+        "合并套餐详情可访问",
+        "Subscription 展示解绑或无关联状态",
+        "不展示 Auto-renewal 开关"
+      ],
+      "type": "功能测试",
+      "requirement_ref": "§2.2 合并套餐 Auto-renew — 无 SIM/设备关联隐藏"
+    },
+    {
+      "id": "TC-026",
+      "module": "前台-Dashboard页面-流量套餐-Auto-renew",
+      "title": "验证流量套餐 billingCountry 不支持免密支付时不展示 Auto-renewal 开关",
+      "precondition": "1）测试账号已登录\n2）存在 active 付费流量套餐，billingCountry 不在 PayPal/Adyen 免密支持列表\n3）SIM 已绑定，其他显示条件均满足",
+      "priority": "P2",
+      "steps": [
+        "进入 SIM Card 详情 Subscription 区域",
+        "点击 Show More 展开",
+        "查看 Auto-renewal 区域"
+      ],
+      "expects": [
+        "SIM 详情 Subscription 正常展示",
+        "Show More 展开成功",
+        "不展示 Auto-renewal 开关（hideAutoRenewSwitch 由后端判定）"
+      ],
+      "type": "功能测试",
+      "requirement_ref": "§2.2 流量套餐 Auto-renew — hideAutoRenewSwitch/billingCountry"
+    },
+    {
+      "id": "TC-027",
+      "module": "前台-Dashboard页面-云套餐-Auto-renew",
+      "title": "验证 Reolink Cloud Service Tab 已移除批量续费且单卡片 Auto-renew 正常",
+      "precondition": "1）测试账号已登录\n2）Current Subscription 存在至少 2 张可展示 Auto-renew 的云套餐卡片",
+      "priority": "P2",
+      "steps": [
+        "进入 Cloud Dashboard Reolink Cloud Service Tab",
+        "查看 Current Subscription 列表顶部/批量操作区域",
+        "分别查看各云套餐卡片 Auto-renewal 开关"
+      ],
+      "expects": [
+        "Cloud Service Tab 正常加载",
+        "不存在批量续费（Batch Renew）入口或批量操作模式 inBatchMode",
+        "各单卡片 Auto-renewal 开关独立可见且可操作"
+      ],
+      "type": "功能测试",
+      "requirement_ref": "§Table5 Dashboard — Cloud Service 去掉批量续费；!inBatchMode"
+    },
+    {
+      "id": "TC-028",
+      "module": "前台-Dashboard页面-流量套餐-Auto-renew",
+      "title": "验证 Reolink Cellular Data Service Tab 保留 Auto-renewal 且不受 Cloud 批量续费移除影响",
+      "precondition": "1）测试账号已登录\n2）Cellular Data Service 存在至少 1 个满足展示条件的 active 付费流量套餐",
+      "priority": "P2",
+      "steps": [
+        "进入 Cloud Dashboard，切换至 Reolink Cellular Data Service Tab",
+        "进入 SIM Card 详情展开 Auto-renewal",
+        "返回 Cloud Service Tab 确认无批量续费"
+      ],
+      "expects": [
+        "Cellular Data Service Tab 正常加载",
+        "流量套餐 SIM 详情 Auto-renewal 开关可见可用",
+        "Cloud Service Tab 仍无批量续费入口，两 Tab 逻辑互不影响"
+      ],
+      "type": "功能测试",
+      "requirement_ref": "§Table5 Dashboard — Cellular Data Service 保留自动续费"
+    }
+  ]
+}

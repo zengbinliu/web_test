@@ -1,0 +1,24 @@
+{
+  "generated_at": "2026-07-09T12:59:23",
+  "input_dir": "C:\\Users\\Reolink\\Downloads\\接口自动化场景",
+  "jmx_total": 194,
+  "scene_total": 194,
+  "api_total": 93,
+  "index_total": 13,
+  "supplemental_total": 300,
+  "parse_errors": [],
+  "domain_distribution": {
+    "套餐": 64,
+    "SIM": 22,
+    "其他": 22,
+    "支付": 19,
+    "设备": 18,
+    "邮件": 18,
+    "账户": 10,
+    "优惠": 7,
+    "退款": 6,
+    "library": 5,
+    "查询": 3
+  },
+  "linked_zentao_total": 40
+}

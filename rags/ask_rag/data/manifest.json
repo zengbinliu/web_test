@@ -1,0 +1,12 @@
+{
+  "generated_at": "2026-07-06 18:12:57",
+  "browse_url": "https://pms.reolink.com.cn/index.php?m=testcase&f=browse&productID=42&branch=all&browseType=byModule&param=20331",
+  "product_id": 42,
+  "module_id": 20331,
+  "module_path_text": "全量用例",
+  "branch": "all",
+  "browse_type": "byModule",
+  "testcase_total": 2498,
+  "module_count": 231,
+  "output_dir": "D:\\reolink_knowledge"
+}
