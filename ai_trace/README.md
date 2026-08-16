@@ -6,6 +6,47 @@
 2. **异常检测**（TF-IDF + Isolation Forest，辅以 ERROR/超时等规则）
 3. **根因分析**（构建事件链 → LLM JSON → 事件路径与建议；失败则启发式兜底）
 
+## 完整 trace-id 日志的处理流程
+
+当你传入**同一 `trace_id` / `request_id` 的完整调用链**（如样例中的 `req-1001`）时，系统按下列路径处理：
+
+```text
+完整 trace 日志
+  → parser：逐行结构化，抽出 trace_id / request_id / session_id
+  → 全部 LogEvent（同 ID 的 INFO/WARN/ERROR/堆栈都挂上同一 trace_id）
+  → AnomalyDetector：在整批日志上做 TF-IDF + Isolation Forest + 规则检测
+  → 异常点（如 ERROR、timeout）
+  → build_event_chains：异常点带 trace_id 时，按 ID 聚合同一请求的全部事件
+  → 格式化事件链（异常行标 [ANOMALY]）
+  → LLM 输出根因 JSON；不可用或解析失败则启发式兜底（fallback=true）
+```
+
+### 各步要点
+
+1. **结构化**  
+   从 JSON 字段或正文中的 `trace_id=` / `request_id=` / `session_id=` 写入 `LogEvent.trace_id`。多行堆栈并入上一条 ERROR 的 `message`。
+
+2. **异常检测**  
+   对你传入的**全部**日志训练/检测，找出异常点；不会只保留异常行，后续建链仍需要同 ID 的正常上下文。
+
+3. **事件链（有 trace_id 时的关键行为）**  
+   只要异常点带有 `trace_id`，就**只收集该 ID 下的全部事件**，不走「前后 30 秒 / 前后 8 条」时间窗。  
+   因此完整单 trace 会收齐：下单 → 库存 → 支付 → 超时 → 重试 → 失败等；同文件里其它请求（如 `job-77`、`/health`）不会进入这条链，除非它们自己也被判为异常且带有别的 ID。
+
+4. **LLM / 兜底**  
+   链上事件格式化后送入 LLM，得到 `event_path`、`root_cause`、`confidence`、`suggestions`、`evidence`。未配置 LLM 或 JSON 解析失败时，根因取链上首条 ERROR/异常摘要，并标记 `fallback=true`。
+
+### 使用建议
+
+| 条件 | 效果 |
+|------|------|
+| 每行都能抽出同一 ID | 链路完整、上下文干净 |
+| 链上有 ERROR / 超时等 | 能检出异常点并触发 RCA |
+| 只喂这一条 trace | 最干净；混入其它请求也会按 ID 隔离 |
+| 异常行抽不出 ID | 退回时间窗 + 前后邻居，可能混进无关日志 |
+
+样例文件：`samples/sample.log`（主链路 `request_id=req-1001`）。
+
 ## 安装
 
 在仓库根目录或本目录：
