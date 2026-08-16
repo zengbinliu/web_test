@@ -1,0 +1,18 @@
+2026-08-16 17:48:01,001 [INFO] gateway.http: received POST /api/orders request_id=req-1001
+2026-08-16 17:48:01,045 [INFO] order.service: create order start request_id=req-1001 user=u42
+2026-08-16 17:48:01,120 [INFO] inventory.service: reserve stock sku=CAM-01 qty=1 request_id=req-1001
+2026-08-16 17:48:01,180 [WARN] inventory.service: stock low sku=CAM-01 remaining=2 request_id=req-1001
+2026-08-16 17:48:01,260 [INFO] payment.client: call pay gateway amount=99.00 request_id=req-1001
+2026-08-16 17:48:31,280 [ERROR] payment.client: timeout after 30s waiting for gateway response request_id=req-1001
+2026-08-16 17:48:31,290 [WARN] payment.client: retry pay attempt=1 request_id=req-1001
+2026-08-16 17:49:01,310 [ERROR] payment.client: timeout after 30s waiting for gateway response request_id=req-1001
+Traceback (most recent call last):
+  File "payment/client.py", line 88, in charge
+    return self._post("/charge", payload, timeout=30)
+TimeoutError: gateway did not respond within 30 seconds
+2026-08-16 17:49:01,320 [ERROR] order.service: order confirm failed request_id=req-1001 reason=payment_timeout
+2026-08-16 17:49:01,400 [INFO] gateway.http: response 502 POST /api/orders request_id=req-1001
+2026-08-16 17:50:00,010 [INFO] gateway.http: received GET /health
+2026-08-16 17:50:00,015 [INFO] gateway.http: response 200 GET /health
+{"ts":"2026-08-16 17:51:00.100","level":"INFO","logger":"billing.job","msg":"daily reconcile start","trace_id":"job-77"}
+{"ts":"2026-08-16 17:51:00.500","level":"INFO","logger":"billing.job","msg":"daily reconcile done","trace_id":"job-77"}
